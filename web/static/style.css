@@ -61,11 +61,13 @@ main { max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
 }
 .search-bar input:focus { outline: none; border-color: #7289da; }
 .filters { display: flex; gap: .5rem; }
-.filters select {
+.filters select, .filters input[type="text"] {
   padding: .4rem .8rem;
   background: #16213e; border: 1px solid #0f3460;
   border-radius: 6px; color: #e0e0e0; font-size: .9rem;
 }
+.filters input[type="text"] { width: 120px; }
+.filters input[type="text"]:focus { outline: none; border-color: #7289da; }
 
 .toggle-events {
   display: flex; align-items: center; gap: .4rem;

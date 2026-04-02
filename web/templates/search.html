@@ -14,6 +14,7 @@
     <select id="filter-channel">
       <option value="">모든 채널</option>
     </select>
+    <input id="filter-author" type="text" placeholder="유저명" autocomplete="off">
     <label class="toggle-events"><input type="checkbox" id="show-events"> 이벤트 포함</label>
   </div>
 
@@ -32,9 +33,11 @@ function pushState() {
   const channelId = document.getElementById('filter-channel').value;
   const q = document.getElementById('query').value.trim();
   const showEvents = document.getElementById('show-events').checked;
+  const author = document.getElementById('filter-author').value.trim();
   if (guildId) params.set('guild', guildId);
   if (channelId) params.set('channel', channelId);
   if (q) params.set('q', q);
+  if (author) params.set('author', author);
   if (currentPage > 1) params.set('page', currentPage);
   if (showEvents) params.set('events', '1');
   const qs = params.toString();
@@ -75,6 +78,9 @@ async function loadChannels() {
   }
   if (savedChannel) {
     document.getElementById('filter-channel').value = savedChannel;
+  }
+  if (params.get('author')) {
+    document.getElementById('filter-author').value = params.get('author');
   }
   if (params.get('events') === '1') {
     document.getElementById('show-events').checked = true;
@@ -117,6 +123,8 @@ async function loadRecent(channelId, page = 1) {
   window._recentChannelId = channelId;
   pushState();
   const params = new URLSearchParams({ q: '', channel_id: channelId, page });
+  const authorR = document.getElementById('filter-author').value.trim();
+  if (authorR) params.set('author', authorR);
   if (document.getElementById('show-events').checked) params.set('include_events', '1');
   const res = await fetch('/api/search?' + params);
   if (res.status === 401) { location.href = '/'; return; }
@@ -136,6 +144,8 @@ async function doSearch(page = 1) {
   const params = new URLSearchParams({ q, page });
   if (channelId) params.set('channel_id', channelId);
   else if (guildId) params.set('guild_id', guildId);
+  const authorS = document.getElementById('filter-author').value.trim();
+  if (authorS) params.set('author', authorS);
   if (document.getElementById('show-events').checked) params.set('include_events', '1');
 
   const res = await fetch('/api/search?' + params);

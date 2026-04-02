@@ -139,6 +139,7 @@ async def search(
     q: str = Query(default="", max_length=200),
     channel_id: str | None = Query(default=None),
     guild_id: str | None = Query(default=None),
+    author: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     include_events: bool = Query(default=False),
     session: str | None = Cookie(default=None),
@@ -179,6 +180,12 @@ async def search(
     offset = (page - 1) * PAGE_SIZE
 
     target_guild_ids = list({guild_map[cid] for cid in target_ids if cid in guild_map})
+
+    # author 필터용 ILIKE 패턴
+    author_filter = ""
+    author_param = None
+    if author:
+        author_param = f"%{author}%"
 
     ALL_LIMIT = 100
     event_rows = []
@@ -260,34 +267,54 @@ async def search(
                     "pages": math.ceil(int(total) / PAGE_SIZE) if total else 0,
                 }
             else:
-                total = await conn.fetchval(
-                    f"SELECT LEAST(COUNT(*), $2) FROM {LATEST_MESSAGES} WHERE channel_id = ANY($1::text[])",
-                    target_ids, ALL_LIMIT,
-                )
-                rows = await conn.fetch(
-                    f"""
-                    SELECT message_id, guild_id, channel_id, channel_name,
-                           author_name, content, action, created_at, 1.0::float AS score
-                    FROM {LATEST_MESSAGES}
-                    WHERE channel_id = ANY($1::text[])
-                    ORDER BY created_at DESC
-                    LIMIT $2 OFFSET $3
-                    """,
-                    target_ids, PAGE_SIZE, offset,
-                )
+                if author_param:
+                    total = await conn.fetchval(
+                        f"SELECT LEAST(COUNT(*), $3) FROM {LATEST_MESSAGES} WHERE channel_id = ANY($1::text[]) AND author_name ILIKE $2",
+                        target_ids, author_param, ALL_LIMIT,
+                    )
+                    rows = await conn.fetch(
+                        f"""
+                        SELECT message_id, guild_id, channel_id, channel_name,
+                               author_name, content, action, created_at, 1.0::float AS score
+                        FROM {LATEST_MESSAGES}
+                        WHERE channel_id = ANY($1::text[]) AND author_name ILIKE $2
+                        ORDER BY created_at DESC
+                        LIMIT $3 OFFSET $4
+                        """,
+                        target_ids, author_param, PAGE_SIZE, offset,
+                    )
+                else:
+                    total = await conn.fetchval(
+                        f"SELECT LEAST(COUNT(*), $2) FROM {LATEST_MESSAGES} WHERE channel_id = ANY($1::text[])",
+                        target_ids, ALL_LIMIT,
+                    )
+                    rows = await conn.fetch(
+                        f"""
+                        SELECT message_id, guild_id, channel_id, channel_name,
+                               author_name, content, action, created_at, 1.0::float AS score
+                        FROM {LATEST_MESSAGES}
+                        WHERE channel_id = ANY($1::text[])
+                        ORDER BY created_at DESC
+                        LIMIT $2 OFFSET $3
+                        """,
+                        target_ids, PAGE_SIZE, offset,
+                    )
         else:
             use_trgm = len(q) >= 3
             escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             like_q = f"%{escaped}%"
+
+            author_cond = "AND author_name ILIKE $5" if author_param else ""
+            extra_args = [author_param] if author_param else []
 
             if use_trgm:
                 total = await conn.fetchval(
                     f"""
                     SELECT COUNT(*) FROM {LATEST_MESSAGES}
                     WHERE channel_id = ANY($1::text[])
-                      AND content % $2
+                      AND content % $2 {author_cond.replace('$5','$3')}
                     """,
-                    target_ids, q,
+                    target_ids, q, *([author_param] if author_param else []),
                 )
                 rows = await conn.fetch(
                     f"""
@@ -296,20 +323,20 @@ async def search(
                            similarity(content, $2) AS score
                     FROM {LATEST_MESSAGES}
                     WHERE channel_id = ANY($1::text[])
-                      AND content % $2
+                      AND content % $2 {"AND author_name ILIKE $5" if author_param else ""}
                     ORDER BY score DESC, created_at DESC
                     LIMIT $3 OFFSET $4
                     """,
-                    target_ids, q, PAGE_SIZE, offset,
+                    target_ids, q, PAGE_SIZE, offset, *extra_args,
                 )
             else:
                 total = await conn.fetchval(
                     f"""
                     SELECT COUNT(*) FROM {LATEST_MESSAGES}
                     WHERE channel_id = ANY($1::text[])
-                      AND content ILIKE $2 ESCAPE '\\'
+                      AND content ILIKE $2 ESCAPE '\\' {"AND author_name ILIKE $3" if author_param else ""}
                     """,
-                    target_ids, like_q,
+                    target_ids, like_q, *([author_param] if author_param else []),
                 )
                 rows = await conn.fetch(
                     f"""
@@ -318,11 +345,11 @@ async def search(
                            1.0::float AS score
                     FROM {LATEST_MESSAGES}
                     WHERE channel_id = ANY($1::text[])
-                      AND content ILIKE $2 ESCAPE '\\'
+                      AND content ILIKE $2 ESCAPE '\\' {"AND author_name ILIKE $5" if author_param else ""}
                     ORDER BY created_at DESC
                     LIMIT $3 OFFSET $4
                     """,
-                    target_ids, like_q, PAGE_SIZE, offset,
+                    target_ids, like_q, PAGE_SIZE, offset, *extra_args,
                 )
 
             if include_events:
