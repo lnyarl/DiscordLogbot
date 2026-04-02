@@ -61,8 +61,17 @@ async def shutdown():
     await app.state.pool.close()
 
 
-from web.auth import router as auth_router      # noqa: E402
-from web.search import router as search_router  # noqa: E402
+from web.auth import router as auth_router, TEMPLATES as auth_templates      # noqa: E402
+from web.search import router as search_router, TEMPLATES as search_templates  # noqa: E402
+
+# 봇 초대 URL을 모든 템플릿에 글로벌로 주입
+_client_id = os.getenv("DISCORD_CLIENT_ID", "")
+_bot_invite_url = (
+    f"https://discord.com/oauth2/authorize?client_id={_client_id}&permissions=66560&integration_type=0&scope=bot+applications.commands"
+    if _client_id else ""
+)
+for _tpl in (auth_templates, search_templates):
+    _tpl.env.globals["bot_invite_url"] = _bot_invite_url
 
 app.include_router(auth_router)
 app.include_router(search_router)

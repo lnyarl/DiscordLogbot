@@ -24,6 +24,11 @@ header {
   justify-content: space-between;
 }
 .brand { color: #7289da; text-decoration: none; font-weight: 700; font-size: 1.1rem; }
+.bot-invite {
+  display: inline-flex; align-items: center; justify-content: center;
+  color: #43b581; margin-left: .4rem; opacity: .7; transition: opacity .15s;
+}
+.bot-invite:hover { opacity: 1; }
 .user-info { display: flex; align-items: center; gap: 1rem; font-size: .9rem; }
 
 main { max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
