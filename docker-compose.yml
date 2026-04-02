@@ -7,6 +7,8 @@ services:
     env_file: .env
     volumes:
       - ./data:/app/data
+      - ./data/attachments:/app/data/attachments
+      - ./data/emojis:/app/data/emojis
     depends_on:
       logbot-postgres:
         condition: service_healthy
@@ -23,6 +25,9 @@ services:
     env_file: .env
     ports:
       - "127.0.0.1:8080:8000"
+    volumes:
+      - ./data/attachments:/app/data/attachments:ro
+      - ./data/emojis:/app/data/emojis:ro
     depends_on:
       logbot-postgres:
         condition: service_healthy

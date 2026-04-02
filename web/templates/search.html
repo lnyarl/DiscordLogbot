@@ -187,11 +187,28 @@ function renderResults(data, q) {
     } else {
       const actionLabel = ACTION_LABELS[r.action] || r.action;
       const safeContent = escHtml(r.content);
-      const highlighted = q ? safeContent.replace(
+      const withEmojis = renderEmojis(safeContent);
+      const highlighted = q ? withEmojis.replace(
         new RegExp(escHtml(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'),
         m => `<mark>${m}</mark>`
-      ) : safeContent;
+      ) : withEmojis;
       const discordLink = `https://discord.com/channels/${r.guild_id}/${r.channel_id}/${r.message_id}`;
+      const attachments = r.attachments || [];
+      const imageExts = ['image/png','image/jpeg','image/gif','image/webp','image/svg+xml'];
+      const images = attachments.filter(a => imageExts.includes(a.content_type));
+      const files = attachments.filter(a => !imageExts.includes(a.content_type));
+      const getUrl = (a) => a.local_path ? '/attachments/' + encodeURI(a.local_path) : a.url;
+      let attachHtml = '';
+      if (images.length) {
+        attachHtml += '<div class="result-images">' + images.map(a =>
+          `<a href="${escHtml(getUrl(a))}" target="_blank" rel="noopener"><img src="${escHtml(getUrl(a))}" alt="${escHtml(a.filename)}" loading="lazy"></a>`
+        ).join('') + '</div>';
+      }
+      if (files.length) {
+        attachHtml += '<div class="result-files">' + files.map(a =>
+          `<a href="${escHtml(getUrl(a))}" target="_blank" rel="noopener" class="file-link">📎 ${escHtml(a.filename)}</a>`
+        ).join('') + '</div>';
+      }
       el.innerHTML = `
         <div class="result-meta">
           ${r.action !== 'add' ? `<span class="msg-action msg-action-${escHtml(r.action)}">${escHtml(actionLabel)}</span>` : ''}
@@ -201,6 +218,7 @@ function renderResults(data, q) {
           <a href="${discordLink}" target="_blank" rel="noopener" class="discord-link" title="Discord에서 보기">↗</a>
         </div>
         <div class="result-content">${highlighted}</div>
+        ${attachHtml}
       `;
     }
     container.appendChild(el);
@@ -231,6 +249,15 @@ function showError(msg) {
 function escHtml(s) {
   if (s == null) return '';
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function renderEmojis(html) {
+  // escHtml 이후의 텍스트에서 이모지 패턴 치환
+  // 원본: <a:name:id> or <:name:id>  →  escHtml 후: &lt;a:name:id&gt; or &lt;:name:id&gt;
+  return html.replace(/&lt;(a?):(\w+):(\d+)&gt;/g, (_, anim, name, id) => {
+    const ext = anim ? 'gif' : 'png';
+    return `<img class="inline-emoji" src="/emojis/${id}.${ext}" alt=":${name}:" title=":${name}:">`;
+  });
 }
 
 document.getElementById('btn-search').addEventListener('click', () => doSearch(1));

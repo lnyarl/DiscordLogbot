@@ -30,6 +30,18 @@ app.add_exception_handler(RateLimitExceeded, lambda req, exc: JSONResponse(
 ))
 app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
 
+# 첨부파일·이모지 서빙 (bot 컨테이너가 디렉토리를 생성해야 함)
+_data_base = os.path.join(os.path.dirname(__file__), "..", "data")
+_attachments_dir = os.getenv("ATTACHMENTS_DIR", os.path.join(_data_base, "attachments"))
+_emojis_dir = os.getenv("EMOJIS_DIR", os.path.join(_data_base, "emojis"))
+
+for _dir in (_attachments_dir, _emojis_dir):
+    if not os.path.isdir(_dir):
+        sys.exit(f"오류: 디렉토리가 존재하지 않습니다: {_dir}\nbot 컨테이너가 먼저 기동되어야 합니다.")
+
+app.mount("/attachments", StaticFiles(directory=_attachments_dir), name="attachments")
+app.mount("/emojis", StaticFiles(directory=_emojis_dir), name="emojis")
+
 
 @app.on_event("startup")
 async def startup():

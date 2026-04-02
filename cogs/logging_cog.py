@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from db.base import AbstractDatabase
+from utils.attachments import download_attachment, download_emojis
 
 
 class LoggingCog(commands.Cog):
@@ -43,17 +44,26 @@ class LoggingCog(commands.Cog):
         if not await self.db.is_channel_logged(guild_id, channel_id):
             return
 
-        attachments = [
-            {
+        attachments = []
+        for a in message.attachments:
+            local_path = await download_attachment(
+                url=a.url,
+                channel_id=channel_id,
+                message_id=str(message.id),
+                filename=a.filename,
+            )
+            attachments.append({
                 "url": a.url,
+                "local_path": local_path,
                 "filename": a.filename,
                 "content_type": a.content_type or "",
                 "size": a.size,
-            }
-            for a in message.attachments
-        ]
+            })
 
         content = message.content
+        if content:
+            await download_emojis(content)
+
         if not content and attachments:
             content = " ".join(f"[{a['filename']}]" for a in attachments)
         elif content and attachments:

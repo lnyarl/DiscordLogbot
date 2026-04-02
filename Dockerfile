@@ -9,7 +9,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 소스 복사
 COPY . .
 
-RUN mkdir -p /app/data && \
+RUN mkdir -p /app/data/attachments /app/data/emojis && \
     addgroup --system --gid 1001 appgroup && \
     adduser --system --uid 1001 --ingroup appgroup appuser && \
     chown appuser:appgroup /app/data

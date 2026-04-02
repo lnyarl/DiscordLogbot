@@ -107,4 +107,33 @@ main { max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
 .msg-action-update { background: #4a4a2a; color: #c8b96a; }
 .msg-action-delete { background: #4a2a2a; color: #c86a6a; }
 
+/* 인라인 커스텀 이모지 */
+.inline-emoji {
+  height: 1.4em; width: auto;
+  vertical-align: middle; margin: 0 .1em;
+}
+
+/* 첨부 이미지 */
+.result-images {
+  display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .5rem;
+}
+.result-images a { display: block; }
+.result-images img {
+  max-width: 300px; max-height: 200px;
+  border-radius: 6px; border: 1px solid #0f3460;
+  cursor: pointer; transition: opacity .15s;
+}
+.result-images img:hover { opacity: .85; }
+
+/* 첨부 파일 */
+.result-files {
+  display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .5rem;
+}
+.file-link {
+  display: inline-flex; align-items: center; gap: .3rem;
+  background: #0f3460; color: #a8b6ff; padding: .3rem .7rem;
+  border-radius: 4px; font-size: .85rem; text-decoration: none;
+}
+.file-link:hover { background: #1a4a7a; }
+
 .pagination { display: flex; gap: .4rem; flex-wrap: wrap; }

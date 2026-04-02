@@ -1,4 +1,5 @@
 """검색 API 및 UI."""
+import json
 import math
 import os
 
@@ -14,6 +15,16 @@ TEMPLATES = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "t
 router = APIRouter()
 
 PAGE_SIZE = 20
+
+
+def _parse_attachments(raw: str | None) -> list[dict]:
+    """Parse attachments JSON string into a list of dicts."""
+    if not raw:
+        return []
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
 
 
 def _get_session(session: str | None) -> dict | None:
@@ -217,7 +228,7 @@ async def search(
                         SELECT
                             'message' AS type,
                             message_id, guild_id, channel_id, channel_name,
-                            author_name, content, created_at AS ts,
+                            author_name, content, attachments, created_at AS ts,
                             action, NULL AS event_type, NULL AS target_name, NULL AS details
                         FROM {LATEST_MESSAGES}
                         WHERE channel_id = $1
@@ -225,7 +236,7 @@ async def search(
                         SELECT
                             'event' AS type,
                             NULL, guild_id, NULL, NULL,
-                            actor_name, NULL, occurred_at AS ts,
+                            actor_name, NULL, '[]', occurred_at AS ts,
                             NULL, event_type, target_name, details
                         FROM guild_events
                         WHERE guild_id = $2
@@ -260,6 +271,7 @@ async def search(
                             "channel_name": row["channel_name"],
                             "author_name": row["author_name"],
                             "content": row["content"],
+                            "attachments": _parse_attachments(row["attachments"]),
                             "created_at": row["ts"],
                             "score": None,
                         })
@@ -278,7 +290,7 @@ async def search(
                     rows = await conn.fetch(
                         f"""
                         SELECT message_id, guild_id, channel_id, channel_name,
-                               author_name, content, action, created_at, 1.0::float AS score
+                               author_name, content, attachments, action, created_at, 1.0::float AS score
                         FROM {LATEST_MESSAGES}
                         WHERE channel_id = ANY($1::text[]) AND author_name ILIKE $2
                         ORDER BY created_at DESC
@@ -294,7 +306,7 @@ async def search(
                     rows = await conn.fetch(
                         f"""
                         SELECT message_id, guild_id, channel_id, channel_name,
-                               author_name, content, action, created_at, 1.0::float AS score
+                               author_name, content, attachments, action, created_at, 1.0::float AS score
                         FROM {LATEST_MESSAGES}
                         WHERE channel_id = ANY($1::text[])
                         ORDER BY created_at DESC
@@ -322,7 +334,7 @@ async def search(
                 rows = await conn.fetch(
                     f"""
                     SELECT message_id, guild_id, channel_id, channel_name,
-                           author_name, content, action, created_at,
+                           author_name, content, attachments, action, created_at,
                            similarity(content, $2) AS score
                     FROM {LATEST_MESSAGES}
                     WHERE channel_id = ANY($1::text[])
@@ -344,7 +356,7 @@ async def search(
                 rows = await conn.fetch(
                     f"""
                     SELECT message_id, guild_id, channel_id, channel_name,
-                           author_name, content, action, created_at,
+                           author_name, content, attachments, action, created_at,
                            1.0::float AS score
                     FROM {LATEST_MESSAGES}
                     WHERE channel_id = ANY($1::text[])
@@ -380,6 +392,7 @@ async def search(
             "channel_name": row["channel_name"],
             "author_name": row["author_name"],
             "content": row["content"],
+            "attachments": _parse_attachments(row["attachments"]),
             "created_at": row["created_at"],
             "score": round(row["score"], 3),
         })
