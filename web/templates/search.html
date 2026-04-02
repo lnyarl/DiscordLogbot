@@ -156,7 +156,7 @@ function renderResults(data, q) {
     const el = document.createElement('div');
     el.className = 'result-item';
 
-    const ACTION_LABELS = {add: '작성', update: '수정', delete: '삭제'};
+    const ACTION_LABELS = {add: '작성', update: '수정됨', delete: '삭제됨'};
 
     if (r.type === 'event') {
       const parsed = typeof r.details === 'string' ? (() => { try { return JSON.parse(r.details); } catch { return {}; } })() : (r.details || {});
@@ -177,12 +177,14 @@ function renderResults(data, q) {
         new RegExp(escHtml(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'),
         m => `<mark>${m}</mark>`
       ) : safeContent;
+      const discordLink = `https://discord.com/channels/${r.guild_id}/${r.channel_id}/${r.message_id}`;
       el.innerHTML = `
         <div class="result-meta">
           ${r.action !== 'add' ? `<span class="msg-action msg-action-${escHtml(r.action)}">${escHtml(actionLabel)}</span>` : ''}
           <span class="channel">#${escHtml(r.channel_name)}</span>
           <span class="author">@${escHtml(r.author_name)}</span>
           <span class="time">${new Date(r.created_at).toLocaleString('ko-KR')}</span>
+          <a href="${discordLink}" target="_blank" rel="noopener" class="discord-link" title="Discord에서 보기">↗</a>
         </div>
         <div class="result-content">${highlighted}</div>
       `;

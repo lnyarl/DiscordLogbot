@@ -221,6 +221,8 @@ async def search(
                         results.append({
                             "type": "message",
                             "message_id": row["message_id"],
+                            "guild_id": row["guild_id"],
+                            "channel_id": row["channel_id"],
                             "action": row["action"],
                             "guild_name": ch_info.get("guild_name", ""),
                             "channel_name": row["channel_name"],
@@ -320,6 +322,8 @@ async def search(
         results.append({
             "type": "message",
             "message_id": row["message_id"],
+            "guild_id": row["guild_id"],
+            "channel_id": row["channel_id"],
             "action": row["action"],
             "guild_name": ch_info.get("guild_name", ""),
             "channel_name": row["channel_name"],

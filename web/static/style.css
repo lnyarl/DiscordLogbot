@@ -87,6 +87,10 @@ main { max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
 .result-meta .guild { color: #7289da; }
 .result-meta .channel { color: #43b581; }
 .result-meta .author { color: #faa61a; }
+.discord-link {
+  color: #a8b6ff; text-decoration: none; font-size: 1.1rem; margin-left: auto;
+}
+.discord-link:hover { color: #fff; }
 .result-content { line-height: 1.6; word-break: break-word; }
 .result-content mark { background: #faa61a33; color: #faa61a; border-radius: 2px; }
 .result-meta .event-type {
@@ -98,7 +102,7 @@ main { max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
   padding: .1rem .5rem; border-radius: 4px;
   font-weight: 600; font-size: .75rem; color: #fff;
 }
-.msg-action-update { background: #faa61a; }
-.msg-action-delete { background: #ed4245; }
+.msg-action-update { background: #4a4a2a; color: #c8b96a; }
+.msg-action-delete { background: #4a2a2a; color: #c86a6a; }
 
 .pagination { display: flex; gap: .4rem; flex-wrap: wrap; }
