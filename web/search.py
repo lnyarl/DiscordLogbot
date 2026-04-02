@@ -168,8 +168,22 @@ async def search(
     if not payload:
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
-    accessible = payload.get("channels", [])
-    accessible_ids = {ch["channel_id"] for ch in accessible}
+    # JWT에서 접근 가능한 길드 확인
+    jwt_channels = payload.get("channels", [])
+    accessible_guild_ids = {ch["guild_id"] for ch in jwt_channels}
+
+    if not accessible_guild_ids:
+        return {"results": [], "total": 0, "page": page, "pages": 0}
+
+    # DB에서 로깅 대상 채널 조회 (유저가 접근 가능한 길드 한정)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        log_rows = await conn.fetch(
+            "SELECT guild_id, channel_id FROM log_channels WHERE guild_id = ANY($1::text[])",
+            list(accessible_guild_ids),
+        )
+    accessible_ids = {row["channel_id"] for row in log_rows}
+    guild_map = {row["channel_id"]: row["guild_id"] for row in log_rows}
 
     if not accessible_ids:
         return {"results": [], "total": 0, "page": page, "pages": 0}
@@ -180,23 +194,16 @@ async def search(
             return JSONResponse({"error": "Forbidden"}, status_code=403)
         target_ids = [channel_id]
     elif guild_id:
-        target_ids = [
-            ch["channel_id"] for ch in accessible
-            if ch["guild_id"] == guild_id
-        ]
+        target_ids = [cid for cid, gid in guild_map.items() if gid == guild_id]
         if not target_ids:
             return {"results": [], "total": 0, "page": page, "pages": 0}
     else:
         target_ids = list(accessible_ids)
 
-    pool = request.app.state.pool
     offset = (page - 1) * PAGE_SIZE
-    ch_map = {ch["channel_id"]: ch for ch in accessible}
+    ch_map = {ch["channel_id"]: ch for ch in jwt_channels}
 
-    target_guild_ids = list({
-        ch["guild_id"] for ch in accessible
-        if ch["channel_id"] in set(target_ids)
-    })
+    target_guild_ids = list({guild_map[cid] for cid in target_ids if cid in guild_map})
 
     ALL_LIMIT = 100
     event_rows = []
