@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}검색 — LogSearch{% endblock %}
+{% block content %}
+<div class="search-wrap">
+  <div class="search-bar">
+    <input id="query" type="text" placeholder="검색어를 입력하세요..." autocomplete="off">
+    <button id="btn-search" class="btn">검색</button>
+  </div>
+
+  <div class="filters">
+    <select id="filter-guild">
+      <option value="">모든 서버</option>
+    </select>
+    <select id="filter-channel">
+      <option value="">모든 채널</option>
+    </select>
+  </div>
+
+  <div id="results-info" class="results-info"></div>
+  <div id="results" class="results"></div>
+  <div id="pagination" class="pagination"></div>
+</div>
+
+<script>
+let allChannels = [];
+let currentPage = 1;
+
+async function loadChannels() {
+  const res = await fetch('/api/channels');
+  const data = await res.json();
+  allChannels = data.channels || [];
+
+  // 서버 목록
+  const guilds = [...new Map(allChannels.map(c => [c.guild_id, c.guild_name])).entries()];
+  const guildSel = document.getElementById('filter-guild');
+  guilds.forEach(([id, name]) => {
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = name;
+    guildSel.appendChild(opt);
+  });
+
+  guildSel.addEventListener('change', updateChannelFilter);
+}
+
+function updateChannelFilter() {
+  const guildId = document.getElementById('filter-guild').value;
+  const chSel = document.getElementById('filter-channel');
+  chSel.innerHTML = '<option value="">모든 채널</option>';
+  const filtered = guildId ? allChannels.filter(c => c.guild_id === guildId) : allChannels;
+  filtered.forEach(c => {
+    const opt = document.createElement('option');
+    opt.value = c.channel_id;
+    opt.textContent = '#' + c.channel_name;
+    chSel.appendChild(opt);
+  });
+}
+
+async function doSearch(page = 1) {
+  const q = document.getElementById('query').value.trim();
+  if (!q) return;
+
+  currentPage = page;
+  const guildId = document.getElementById('filter-guild').value;
+  const channelId = document.getElementById('filter-channel').value;
+
+  const params = new URLSearchParams({ q, page });
+  if (channelId) params.set('channel_id', channelId);
+  else if (guildId) params.set('guild_id', guildId);
+
+  const res = await fetch('/api/search?' + params);
+  if (res.status === 401) { location.href = '/'; return; }
+  if (res.status === 403) { showError('접근 권한이 없는 채널입니다.'); return; }
+
+  const data = await res.json();
+  renderResults(data, q);
+}
+
+function renderResults(data, q) {
+  const info = document.getElementById('results-info');
+  const container = document.getElementById('results');
+  const pagination = document.getElementById('pagination');
+
+  info.textContent = data.total > 0
+    ? `총 ${data.total.toLocaleString()}개 결과`
+    : '결과가 없습니다.';
+
+  container.innerHTML = '';
+  data.results.forEach(r => {
+    const el = document.createElement('div');
+    el.className = 'result-item';
+    // r.content를 먼저 이스케이프한 뒤 <mark> 태그 삽입 (XSS 방지)
+    const safeContent = escHtml(r.content);
+    const highlighted = safeContent.replace(
+      new RegExp(escHtml(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'),
+      m => `<mark>${m}</mark>`
+    );
+    el.innerHTML = `
+      <div class="result-meta">
+        <span class="guild">${escHtml(r.guild_name)}</span>
+        <span class="channel">#${escHtml(r.channel_name)}</span>
+        <span class="author">@${escHtml(r.author_name)}</span>
+        <span class="time">${new Date(r.created_at).toLocaleString('ko-KR')}</span>
+      </div>
+      <div class="result-content">${highlighted}</div>
+    `;
+    container.appendChild(el);
+  });
+
+  // 페이지네이션
+  pagination.innerHTML = '';
+  if (data.pages > 1) {
+    for (let i = 1; i <= data.pages; i++) {
+      const btn = document.createElement('button');
+      btn.textContent = i;
+      btn.className = 'btn btn-sm' + (i === currentPage ? ' active' : '');
+      btn.addEventListener('click', () => doSearch(i));
+      pagination.appendChild(btn);
+    }
+  }
+}
+
+function showError(msg) {
+  document.getElementById('results-info').textContent = msg;
+  document.getElementById('results').innerHTML = '';
+  document.getElementById('pagination').innerHTML = '';
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+document.getElementById('btn-search').addEventListener('click', () => doSearch(1));
+document.getElementById('query').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doSearch(1);
+});
+
+loadChannels();
+</script>
+{% endblock %}

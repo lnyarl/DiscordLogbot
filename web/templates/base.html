@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}DiscordLogbot{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <a href="/" class="brand">📋 LogSearch</a>
+      {% if username is defined and username %}
+      <div class="user-info">
+        <span>{{ username }}</span>
+        <form method="post" action="/auth/logout" style="display:inline">
+          <button type="submit" class="btn btn-sm">로그아웃</button>
+        </form>
+      </div>
+      {% endif %}
+    </div>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

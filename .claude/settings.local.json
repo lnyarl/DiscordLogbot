@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p \"C:\\\\Users\\\\lnyarl\\\\Projects\\\\DiscordLogbot\\\\.claude\\\\agents\")",
+      "Bash(mkdir -p \"C:\\\\Users\\\\lnyarl\\\\Projects\\\\DiscordLogbot\\\\.claude\\\\skills\\\\discord-feature-planner\")",
+      "Bash(mkdir -p \"C:\\\\Users\\\\lnyarl\\\\Projects\\\\DiscordLogbot\\\\.claude\\\\skills\\\\discord-bot-coder\")",
+      "Bash(mkdir -p \"C:\\\\Users\\\\lnyarl\\\\Projects\\\\DiscordLogbot\\\\.claude\\\\skills\\\\discord-code-reviewer\")",
+      "Bash(mkdir -p \"C:\\\\Users\\\\lnyarl\\\\Projects\\\\DiscordLogbot\\\\.claude\\\\skills\\\\discord-dev-orchestrator\")"
+    ]
+  }
+}
