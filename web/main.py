@@ -25,6 +25,8 @@ async def startup():
             CREATE INDEX IF NOT EXISTS idx_messages_content_trgm
             ON messages USING GIN (content gin_trgm_ops)
         """)
+    from db.migrate import run_migrations
+    await run_migrations(app.state.pool)
 
 
 @app.on_event("shutdown")

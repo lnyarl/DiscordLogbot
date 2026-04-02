@@ -17,6 +17,8 @@ class PostgreSQLDatabase(AbstractDatabase):
     async def connect(self) -> None:
         self._pool = await asyncpg.create_pool(self.database_url)
         await self._create_tables()
+        from db.migrate import run_migrations
+        await run_migrations(self._pool)
 
     async def close(self) -> None:
         if self._pool:
