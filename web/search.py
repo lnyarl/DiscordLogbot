@@ -5,6 +5,7 @@ import os
 from fastapi import APIRouter, Cookie, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from web.main import limiter
 
 from web.auth import decode_jwt
 
@@ -34,6 +35,7 @@ async def search_page(request: Request, session: str | None = Cookie(default=Non
 
 
 @router.get("/api/channels")
+@limiter.limit("60/minute")
 async def list_channels(request: Request, session: str | None = Cookie(default=None)):
     payload = _get_session(session)
     if not payload:
@@ -134,6 +136,7 @@ LATEST_MESSAGES = """
 
 
 @router.get("/api/search")
+@limiter.limit("30/minute")
 async def search(
     request: Request,
     q: str = Query(default="", max_length=200),

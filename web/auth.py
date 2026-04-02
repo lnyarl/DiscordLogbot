@@ -15,7 +15,10 @@ DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "")
 DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "")
 DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI", "http://localhost:8080/auth/callback")
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_TOKEN", "")
-JWT_SECRET = os.getenv("JWT_SECRET", secrets.token_hex(32))
+JWT_SECRET = os.getenv("JWT_SECRET")
+if not JWT_SECRET:
+    import sys
+    sys.exit("오류: JWT_SECRET 환경변수가 설정되지 않았습니다. openssl rand -hex 32 로 생성하세요.")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = 24
 
@@ -259,6 +262,7 @@ async def callback(
     response.set_cookie(
         "session", token,
         httponly=True,
+        secure=True,
         samesite="lax",
         max_age=JWT_EXPIRE_HOURS * 3600,
     )
@@ -267,7 +271,11 @@ async def callback(
 
 
 @router.post("/auth/logout")
-async def logout():
+async def logout(request: Request):
+    origin = request.headers.get("origin") or request.headers.get("referer", "")
+    allowed = DISCORD_REDIRECT_URI.rsplit("/", 2)[0]  # https://historian.stashy.in
+    if allowed and not origin.startswith(allowed):
+        return HTMLResponse("Forbidden", status_code=403)
     response = RedirectResponse("/", status_code=303)
     response.delete_cookie("session")
     return response

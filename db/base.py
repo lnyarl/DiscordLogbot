@@ -97,6 +97,11 @@ class AbstractDatabase(ABC):
     ) -> list[dict]: ...
 
     @abstractmethod
+    async def get_latest_message_info(self, message_id: str) -> dict | None:
+        """message_id의 최신 content, author_name을 반환. 없으면 None."""
+        ...
+
+    @abstractmethod
     async def search_messages(
         self,
         guild_id: str,

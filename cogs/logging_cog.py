@@ -186,13 +186,9 @@ class LoggingCog(commands.Cog):
             return
 
         # DB에 저장된 최신 내용과 동일하면 스킵 (핀 변경 등 내용 무변경)
-        async with self.db.pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT content FROM messages WHERE message_id = $1 ORDER BY id DESC LIMIT 1",
-                str(payload.message_id),
-            )
-            if row and row["content"] == new_content:
-                return
+        info = await self.db.get_latest_message_info(str(payload.message_id))
+        if info and info["content"] == new_content:
+            return
 
         guild_id = str(payload.guild_id)
         channel_id = str(payload.channel_id)
@@ -303,18 +299,10 @@ class LoggingCog(commands.Cog):
         for mid in prev - pinned_ids:
             content = ""
             author_name = None
-            # DB에서 조회
-            try:
-                async with self.db.pool.acquire() as conn:
-                    row = await conn.fetchrow(
-                        "SELECT author_name, content FROM messages WHERE message_id = $1 ORDER BY id DESC LIMIT 1",
-                        mid,
-                    )
-                    if row:
-                        content = row["content"]
-                        author_name = row["author_name"]
-            except Exception:
-                pass
+            info = await self.db.get_latest_message_info(mid)
+            if info:
+                content = info["content"]
+                author_name = info["author_name"]
             # DB에 없으면 Discord API에서 가져오기
             if not content:
                 try:

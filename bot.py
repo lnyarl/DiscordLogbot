@@ -44,11 +44,19 @@ class LogBot(commands.Bot):
         await self.load_extension("cogs.moderation_cog")
         await self.load_extension("cogs.scheduled_events_cog")
         await self.load_extension("cogs.integration_cog")
+        self.tree.on_error = self._on_app_command_error
         try:
             synced = await self.tree.sync()
             print(f"Synced {len(synced)} command(s)")
         except Exception as e:
             print(f"Failed to sync commands: {e}")
+
+    async def _on_app_command_error(self, interaction, error):
+        logging.getLogger("logbot").exception("App command error", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("오류가 발생했습니다.", ephemeral=True)
+        else:
+            await interaction.followup.send("오류가 발생했습니다.", ephemeral=True)
 
     async def on_ready(self):
         print(f"Logged in as {self.user} (ID: {self.user.id})")

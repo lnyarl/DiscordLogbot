@@ -183,6 +183,16 @@ class SQLiteDatabase(AbstractDatabase):
             return False
         return channel_id in channels
 
+    # ── Message info ──
+
+    async def get_latest_message_info(self, message_id: str) -> dict | None:
+        cursor = await self.conn.execute(
+            "SELECT content, author_name FROM messages WHERE message_id = ? ORDER BY id DESC LIMIT 1",
+            (message_id,),
+        )
+        row = await cursor.fetchone()
+        return {"content": row[0], "author_name": row[1]} if row else None
+
     # ── Guild events ──
 
     async def save_guild_event(

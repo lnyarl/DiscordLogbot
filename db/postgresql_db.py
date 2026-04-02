@@ -13,6 +13,7 @@ class PostgreSQLDatabase(AbstractDatabase):
     def __init__(self, database_url: str):
         self.database_url = database_url
         self._pool: asyncpg.Pool | None = None
+        self._logged_channels: dict[str, set[str]] = {}
 
     async def connect(self) -> None:
         self._pool = await asyncpg.create_pool(self.database_url)
@@ -200,6 +201,7 @@ class PostgreSQLDatabase(AbstractDatabase):
                 """,
                 guild_id, channel_id, guild_name, channel_name,
             )
+        self._logged_channels.pop(guild_id, None)
 
     async def remove_log_channel(self, guild_id: str, channel_id: str) -> bool:
         async with self.pool.acquire() as conn:
@@ -208,6 +210,7 @@ class PostgreSQLDatabase(AbstractDatabase):
                 guild_id,
                 channel_id,
             )
+            self._logged_channels.pop(guild_id, None)
             return result.split()[-1] != "0"
 
     async def get_log_channels(self, guild_id: str) -> list[str]:
@@ -219,7 +222,10 @@ class PostgreSQLDatabase(AbstractDatabase):
             return [row["channel_id"] for row in rows]
 
     async def is_channel_logged(self, guild_id: str, channel_id: str) -> bool:
+        if guild_id in self._logged_channels:
+            return channel_id in self._logged_channels[guild_id]
         channels = await self.get_log_channels(guild_id)
+        self._logged_channels[guild_id] = set(channels)
         if not channels:
             return False
         return channel_id in channels
@@ -250,6 +256,16 @@ class PostgreSQLDatabase(AbstractDatabase):
                 json.dumps(details, ensure_ascii=False),
                 occurred_at.isoformat(),
             )
+
+    # ── Message info ──
+
+    async def get_latest_message_info(self, message_id: str) -> dict | None:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT content, author_name FROM messages WHERE message_id = $1 ORDER BY id DESC LIMIT 1",
+                message_id,
+            )
+            return {"content": row["content"], "author_name": row["author_name"]} if row else None
 
     # ── Stats ──
 

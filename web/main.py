@@ -3,8 +3,12 @@ import sys
 
 import asyncpg
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 load_dotenv()
 
@@ -12,7 +16,18 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     sys.exit("오류: DATABASE_URL 환경변수가 설정되지 않았습니다.")
 
-app = FastAPI(title="DiscordLogbot Search")
+limiter = Limiter(key_func=get_remote_address)
+
+app = FastAPI(
+    title="DiscordLogbot Search",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, lambda req, exc: JSONResponse(
+    {"error": "Too many requests"}, status_code=429,
+))
 app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
 
 
