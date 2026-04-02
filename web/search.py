@@ -39,46 +39,25 @@ async def list_channels(request: Request, session: str | None = Cookie(default=N
     if not payload:
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
-    # JWT의 채널 목록으로 접근 가능한 guild 파악
-    jwt_channels = payload.get("channels", [])
-    accessible_guild_ids = {ch["guild_id"] for ch in jwt_channels}
+    guild_ids = payload.get("guild_ids", [])
 
-    if not accessible_guild_ids:
+    if not guild_ids:
         return {"channels": []}
 
-    # DB에서 실제 로깅 대상 채널 조회
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT guild_id, channel_id FROM log_channels WHERE guild_id = ANY($1::text[])",
-            list(accessible_guild_ids),
+            "SELECT guild_id, channel_id, guild_name, channel_name FROM log_channels WHERE guild_id = ANY($1::text[])",
+            guild_ids,
         )
-
-    # guild_name 매핑 (JWT에서)
-    guild_names = {ch["guild_id"]: ch["guild_name"] for ch in jwt_channels}
-
-    # channel_name은 messages 테이블에서 조회하거나, DB에 없으면 channel_id 표시
-    channel_ids = [row["channel_id"] for row in rows]
-    channel_names = {}
-    if channel_ids:
-        async with pool.acquire() as conn:
-            name_rows = await conn.fetch(
-                """
-                SELECT DISTINCT ON (channel_id) channel_id, channel_name
-                FROM messages WHERE channel_id = ANY($1::text[])
-                ORDER BY channel_id, id DESC
-                """,
-                channel_ids,
-            )
-            channel_names = {r["channel_id"]: r["channel_name"] for r in name_rows}
 
     channels = []
     for row in rows:
         channels.append({
             "channel_id": row["channel_id"],
-            "channel_name": channel_names.get(row["channel_id"], row["channel_id"]),
+            "channel_name": row["channel_name"] or row["channel_id"],
             "guild_id": row["guild_id"],
-            "guild_name": guild_names.get(row["guild_id"], row["guild_id"]),
+            "guild_name": row["guild_name"] or row["guild_id"],
         })
 
     return {"channels": channels}
@@ -168,19 +147,16 @@ async def search(
     if not payload:
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
-    # JWT에서 접근 가능한 길드 확인
-    jwt_channels = payload.get("channels", [])
-    accessible_guild_ids = {ch["guild_id"] for ch in jwt_channels}
+    guild_ids = payload.get("guild_ids", [])
 
-    if not accessible_guild_ids:
+    if not guild_ids:
         return {"results": [], "total": 0, "page": page, "pages": 0}
 
-    # DB에서 로깅 대상 채널 조회 (유저가 접근 가능한 길드 한정)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         log_rows = await conn.fetch(
             "SELECT guild_id, channel_id FROM log_channels WHERE guild_id = ANY($1::text[])",
-            list(accessible_guild_ids),
+            guild_ids,
         )
     accessible_ids = {row["channel_id"] for row in log_rows}
     guild_map = {row["channel_id"]: row["guild_id"] for row in log_rows}
@@ -201,7 +177,6 @@ async def search(
         target_ids = list(accessible_ids)
 
     offset = (page - 1) * PAGE_SIZE
-    ch_map = {ch["channel_id"]: ch for ch in jwt_channels}
 
     target_guild_ids = list({guild_map[cid] for cid in target_ids if cid in guild_map})
 
@@ -212,8 +187,7 @@ async def search(
         if not q:
             # 빈 검색어: 최신 메시지 (최대 100개)
             if include_events and channel_id:
-                ch_info = ch_map.get(channel_id, {})
-                ch_guild_id = ch_info.get("guild_id", "")
+                ch_guild_id = guild_map.get(channel_id, "")
                 total = await conn.fetchval(
                     f"""
                     SELECT LEAST(cnt, $3) FROM (
@@ -272,7 +246,7 @@ async def search(
                             "guild_id": row["guild_id"],
                             "channel_id": row["channel_id"],
                             "action": row["action"],
-                            "guild_name": ch_info.get("guild_name", ""),
+                            "guild_name": "",
                             "channel_name": row["channel_name"],
                             "author_name": row["author_name"],
                             "content": row["content"],
@@ -333,7 +307,7 @@ async def search(
                     f"""
                     SELECT COUNT(*) FROM {LATEST_MESSAGES}
                     WHERE channel_id = ANY($1::text[])
-                      AND content ILIKE $2 ESCAPE '\\\\'
+                      AND content ILIKE $2 ESCAPE '\\'
                     """,
                     target_ids, like_q,
                 )
@@ -344,7 +318,7 @@ async def search(
                            1.0::float AS score
                     FROM {LATEST_MESSAGES}
                     WHERE channel_id = ANY($1::text[])
-                      AND content ILIKE $2 ESCAPE '\\\\'
+                      AND content ILIKE $2 ESCAPE '\\'
                     ORDER BY created_at DESC
                     LIMIT $3 OFFSET $4
                     """,
@@ -366,14 +340,13 @@ async def search(
 
     results = []
     for row in rows:
-        ch_info = ch_map.get(row["channel_id"], {})
         results.append({
             "type": "message",
             "message_id": row["message_id"],
             "guild_id": row["guild_id"],
             "channel_id": row["channel_id"],
             "action": row["action"],
-            "guild_name": ch_info.get("guild_name", ""),
+            "guild_name": "",
             "channel_name": row["channel_name"],
             "author_name": row["author_name"],
             "content": row["content"],

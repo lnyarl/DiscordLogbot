@@ -121,9 +121,11 @@ class GuildEventsCog(commands.Cog):
         if not changes:
             return
 
+        guild_id = str(before.guild.id)
+
         await self.db.save_guild_event(
             event_type="channel_update",
-            guild_id=str(before.guild.id),
+            guild_id=guild_id,
             actor_id=None,
             actor_name=None,
             target_id=str(before.id),
@@ -131,6 +133,11 @@ class GuildEventsCog(commands.Cog):
             details={"changes": changes},
             occurred_at=datetime.now(timezone.utc),
         )
+
+        # 채널명 변경 시 log_channels 업데이트
+        if before.name != after.name:
+            if await self.db.is_channel_logged(guild_id, str(after.id)):
+                await self.db.add_log_channel(guild_id, str(after.id), after.guild.name, after.name)
 
     # ── 서버 설정 ──
 
@@ -160,16 +167,26 @@ class GuildEventsCog(commands.Cog):
         if not changes:
             return
 
+        guild_id = str(before.id)
+
         await self.db.save_guild_event(
             event_type="guild_update",
-            guild_id=str(before.id),
+            guild_id=guild_id,
             actor_id=None,
             actor_name=None,
-            target_id=str(before.id),
+            target_id=guild_id,
             target_name=after.name,
             details={"changes": changes},
             occurred_at=datetime.now(timezone.utc),
         )
+
+        # 서버명 변경 시 log_channels의 guild_name 일괄 업데이트
+        if before.name != after.name:
+            channel_ids = await self.db.get_log_channels(guild_id)
+            for ch_id in channel_ids:
+                ch = self.bot.get_channel(int(ch_id))
+                ch_name = ch.name if ch else ch_id
+                await self.db.add_log_channel(guild_id, ch_id, after.name, ch_name)
 
     # ── 역할 ──
 

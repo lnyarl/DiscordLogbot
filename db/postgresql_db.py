@@ -50,6 +50,8 @@ class PostgreSQLDatabase(AbstractDatabase):
                 CREATE TABLE IF NOT EXISTS log_channels (
                     guild_id TEXT NOT NULL,
                     channel_id TEXT NOT NULL,
+                    guild_name TEXT NOT NULL DEFAULT '',
+                    channel_name TEXT NOT NULL DEFAULT '',
                     PRIMARY KEY (guild_id, channel_id)
                 )
             """)
@@ -186,16 +188,15 @@ class PostgreSQLDatabase(AbstractDatabase):
 
     # ── Log channel settings ──
 
-    async def add_log_channel(self, guild_id: str, channel_id: str) -> None:
+    async def add_log_channel(self, guild_id: str, channel_id: str, guild_name: str = "", channel_name: str = "") -> None:
         async with self.pool.acquire() as conn:
             await conn.execute(
                 """
-                INSERT INTO log_channels (guild_id, channel_id)
-                VALUES ($1, $2)
-                ON CONFLICT (guild_id, channel_id) DO NOTHING
+                INSERT INTO log_channels (guild_id, channel_id, guild_name, channel_name)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (guild_id, channel_id) DO UPDATE SET guild_name = $3, channel_name = $4
                 """,
-                guild_id,
-                channel_id,
+                guild_id, channel_id, guild_name, channel_name,
             )
 
     async def remove_log_channel(self, guild_id: str, channel_id: str) -> bool:

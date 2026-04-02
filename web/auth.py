@@ -213,7 +213,8 @@ async def callback(
                 "redirect_uri": DISCORD_REDIRECT_URI,
             },
         )
-        r.raise_for_status()
+        if r.status_code != 200:
+            return RedirectResponse("/auth/login")
         token_data = r.json()
         access_token = token_data["access_token"]
 
@@ -228,13 +229,19 @@ async def callback(
     user_id = user["id"]
     username = user["username"]
 
-    # 접근 가능한 채널 목록을 JWT에 포함
+    # 접근 가능한 길드 ID만 JWT에 포함 (채널 목록은 DB에서 실시간 조회)
     try:
-        channels = await get_accessible_channels(access_token, user_id)
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"{DISCORD_API}/users/@me/guilds",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            r.raise_for_status()
+            guild_ids = [g["id"] for g in r.json()]
     except Exception:
         import logging
-        logging.exception("채널 권한 수집 실패 (user_id=%s)", user_id)
-        channels = []
+        logging.exception("길드 목록 수집 실패 (user_id=%s)", user_id)
+        guild_ids = []
 
     expire = datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRE_HOURS)
     token = jwt.encode(
@@ -242,7 +249,7 @@ async def callback(
             "sub": user_id,
             "username": username,
             "exp": expire,
-            "channels": channels,  # [{channel_id, channel_name, guild_id, guild_name}]
+            "guild_ids": guild_ids,
         },
         JWT_SECRET,
         algorithm=JWT_ALGORITHM,

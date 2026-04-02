@@ -47,6 +47,8 @@ class SQLiteDatabase(AbstractDatabase):
             CREATE TABLE IF NOT EXISTS log_channels (
                 guild_id TEXT NOT NULL,
                 channel_id TEXT NOT NULL,
+                guild_name TEXT NOT NULL DEFAULT '',
+                channel_name TEXT NOT NULL DEFAULT '',
                 PRIMARY KEY (guild_id, channel_id)
             );
 
@@ -152,10 +154,10 @@ class SQLiteDatabase(AbstractDatabase):
 
     # ── Log channel settings ──
 
-    async def add_log_channel(self, guild_id: str, channel_id: str) -> None:
+    async def add_log_channel(self, guild_id: str, channel_id: str, guild_name: str = "", channel_name: str = "") -> None:
         await self.conn.execute(
-            "INSERT OR IGNORE INTO log_channels (guild_id, channel_id) VALUES (?, ?)",
-            (guild_id, channel_id),
+            "INSERT INTO log_channels (guild_id, channel_id, guild_name, channel_name) VALUES (?, ?, ?, ?) ON CONFLICT (guild_id, channel_id) DO UPDATE SET guild_name = ?, channel_name = ?",
+            (guild_id, channel_id, guild_name, channel_name, guild_name, channel_name),
         )
         await self.conn.commit()
 
