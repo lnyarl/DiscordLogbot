@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-help}" in
+  up)      docker compose up -d ;;
+  down)    docker compose down ;;
+  build)   docker compose up -d --build ;;
+  logs)    docker compose logs -f ;;
+  restart) docker compose restart ;;
+  ps)      docker compose ps ;;
+  *)
+    echo "Usage: ./run <command>"
+    echo ""
+    echo "  up        실행"
+    echo "  down      중지"
+    echo "  build     빌드 후 실행"
+    echo "  logs      로그 보기"
+    echo "  restart   재시작"
+    echo "  ps        상태 확인"
+    ;;
+esac

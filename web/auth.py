@@ -170,7 +170,7 @@ async def get_accessible_channels(user_access_token: str, user_id: str) -> list[
 async def index(request: Request, session: str | None = Cookie(default=None)):
     payload = decode_jwt(session) if session else None
     if not payload:
-        return TEMPLATES.TemplateResponse("login.html", {"request": request})
+        return TEMPLATES.TemplateResponse(request=request, name="login.html")
     return RedirectResponse("/search")
 
 

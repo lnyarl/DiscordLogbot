@@ -73,6 +73,36 @@ class AdminCog(commands.Cog):
             ephemeral=True,
         )
 
+    @logbot_group.command(name="search", description="로그에서 키워드를 검색합니다")
+    @app_commands.describe(keyword="검색할 키워드")
+    async def logbot_search(
+        self, interaction: discord.Interaction, keyword: str
+    ):
+        guild_id = str(interaction.guild_id)
+        results = await self.db.search_messages(guild_id, keyword, limit=20)
+
+        if not results:
+            await interaction.response.send_message(
+                f"`{keyword}`에 대한 검색 결과가 없습니다.", ephemeral=True
+            )
+            return
+
+        lines = []
+        for r in results:
+            content = r["content"]
+            if len(content) > 80:
+                content = content[:80] + "..."
+            lines.append(
+                f"**#{r['channel_name']}** @{r['author_name']} ({r['created_at'][:10]})\n> {content}"
+            )
+
+        # Discord 메시지 2000자 제한
+        text = f"**`{keyword}` 검색 결과 ({len(results)}건):**\n\n" + "\n\n".join(lines)
+        if len(text) > 2000:
+            text = text[:1997] + "..."
+
+        await interaction.response.send_message(text, ephemeral=True)
+
     @logbot_group.command(name="status", description="봇 상태 및 총 로그 수를 조회합니다")
     async def logbot_status(self, interaction: discord.Interaction):
         guild_id = str(interaction.guild_id)

@@ -8,35 +8,48 @@ services:
     volumes:
       - ./data:/app/data
     depends_on:
-      postgres:
+      logbot-postgres:
         condition: service_healthy
+    networks:
+      - stashy-network
 
   web:
     build:
       context: .
       dockerfile: web/Dockerfile
     restart: unless-stopped
+    container_name: historian
     env_file: .env
     ports:
-      - "8080:8000"
+      - "127.0.0.1:8080:8000"
     depends_on:
-      postgres:
+      logbot-postgres:
         condition: service_healthy
+    networks:
+      - stashy-network
 
-  postgres:
+  logbot-postgres:
     image: postgres:16-alpine
+    container_name: logbot-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: logbot
       POSTGRES_USER: logbot
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - logbot_postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U logbot"]
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - stashy-network
 
 volumes:
-  postgres_data:
+  logbot_postgres_data:
+
+networks:
+  stashy-network:
+    external: true
+    name: stashy-prod_stashy-network

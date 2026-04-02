@@ -41,6 +41,7 @@ async function loadChannels() {
   });
 
   guildSel.addEventListener('change', updateChannelFilter);
+  document.getElementById('filter-channel').addEventListener('change', onChannelSelect);
 }
 
 function updateChannelFilter() {
@@ -54,6 +55,25 @@ function updateChannelFilter() {
     opt.textContent = '#' + c.channel_name;
     chSel.appendChild(opt);
   });
+}
+
+async function onChannelSelect() {
+  const channelId = document.getElementById('filter-channel').value;
+  if (!channelId) return;
+  const q = document.getElementById('query').value.trim();
+  if (q) return; // 검색어가 있으면 검색 우선
+  await loadRecent(channelId);
+}
+
+async function loadRecent(channelId, page = 1) {
+  currentPage = page;
+  window._recentChannelId = channelId;
+  const params = new URLSearchParams({ channel_id: channelId, page });
+  const res = await fetch('/api/recent?' + params);
+  if (res.status === 401) { location.href = '/'; return; }
+  if (res.status === 403) { showError('접근 권한이 없는 채널입니다.'); return; }
+  const data = await res.json();
+  renderResults(data, null);
 }
 
 async function doSearch(page = 1) {
@@ -91,10 +111,10 @@ function renderResults(data, q) {
     el.className = 'result-item';
     // r.content를 먼저 이스케이프한 뒤 <mark> 태그 삽입 (XSS 방지)
     const safeContent = escHtml(r.content);
-    const highlighted = safeContent.replace(
+    const highlighted = q ? safeContent.replace(
       new RegExp(escHtml(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'),
       m => `<mark>${m}</mark>`
-    );
+    ) : safeContent;
     el.innerHTML = `
       <div class="result-meta">
         <span class="guild">${escHtml(r.guild_name)}</span>
@@ -114,7 +134,10 @@ function renderResults(data, q) {
       const btn = document.createElement('button');
       btn.textContent = i;
       btn.className = 'btn btn-sm' + (i === currentPage ? ' active' : '');
-      btn.addEventListener('click', () => doSearch(i));
+      btn.addEventListener('click', () => {
+        if (q) doSearch(i);
+        else if (window._recentChannelId) loadRecent(window._recentChannelId, i);
+      });
       pagination.appendChild(btn);
     }
   }
