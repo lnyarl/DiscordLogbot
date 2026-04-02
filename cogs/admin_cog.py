@@ -26,6 +26,16 @@ class AdminCog(commands.Cog):
         channel_id = str(channel.id)
 
         await self.db.add_log_channel(guild_id, channel_id)
+
+        # LoggingCog의 핀 캐시 초기화
+        logging_cog = self.bot.get_cog("LoggingCog")
+        if logging_cog:
+            try:
+                pinned = await channel.pins()
+                logging_cog._pinned_cache[channel_id] = {str(m.id) for m in pinned}
+            except Exception:
+                logging_cog._pinned_cache[channel_id] = set()
+
         await interaction.response.send_message(
             f"{channel.mention} 채널을 로깅 대상에 추가했습니다.", ephemeral=True
         )

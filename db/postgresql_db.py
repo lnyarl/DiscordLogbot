@@ -1,9 +1,12 @@
 import json
+import logging
 from datetime import datetime, timezone
 
 import asyncpg
 
 from db.base import AbstractDatabase
+
+log = logging.getLogger("logbot.db")
 
 
 class PostgreSQLDatabase(AbstractDatabase):
@@ -31,7 +34,7 @@ class PostgreSQLDatabase(AbstractDatabase):
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS messages (
                     id SERIAL PRIMARY KEY,
-                    message_id TEXT UNIQUE NOT NULL,
+                    message_id TEXT NOT NULL,
                     guild_id TEXT NOT NULL,
                     channel_id TEXT NOT NULL,
                     channel_name TEXT NOT NULL,
@@ -39,23 +42,8 @@ class PostgreSQLDatabase(AbstractDatabase):
                     author_name TEXT NOT NULL,
                     content TEXT NOT NULL,
                     attachments TEXT NOT NULL DEFAULT '[]',
+                    action TEXT NOT NULL DEFAULT 'add',
                     created_at TEXT NOT NULL
-                )
-            """)
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS message_edits (
-                    id SERIAL PRIMARY KEY,
-                    message_id TEXT NOT NULL,
-                    old_content TEXT NOT NULL,
-                    new_content TEXT NOT NULL,
-                    edited_at TEXT NOT NULL
-                )
-            """)
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS message_deletes (
-                    id SERIAL PRIMARY KEY,
-                    message_id TEXT NOT NULL,
-                    deleted_at TEXT NOT NULL
                 )
             """)
             await conn.execute("""
@@ -82,12 +70,8 @@ class PostgreSQLDatabase(AbstractDatabase):
                     ON messages (created_at)
             """)
             await conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_edits_message_id
-                    ON message_edits (message_id)
-            """)
-            await conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_deletes_message_id
-                    ON message_deletes (message_id)
+                CREATE INDEX IF NOT EXISTS idx_messages_action
+                    ON messages (message_id, action)
             """)
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS guild_events (
@@ -124,15 +108,16 @@ class PostgreSQLDatabase(AbstractDatabase):
         content: str,
         attachments: list[dict],
         created_at: datetime,
+        action: str = "add",
     ) -> None:
+        log.info("[%s] #%s @%s: %s", action.upper(), channel_name, author_name, content[:80])
         async with self.pool.acquire() as conn:
             await conn.execute(
                 """
                 INSERT INTO messages
                     (message_id, guild_id, channel_id, channel_name,
-                     author_id, author_name, content, attachments, created_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                ON CONFLICT (message_id) DO NOTHING
+                     author_id, author_name, content, attachments, action, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                 """,
                 message_id,
                 guild_id,
@@ -142,6 +127,7 @@ class PostgreSQLDatabase(AbstractDatabase):
                 author_name,
                 content,
                 json.dumps(attachments),
+                action,
                 created_at.isoformat(),
             )
 
@@ -151,30 +137,52 @@ class PostgreSQLDatabase(AbstractDatabase):
         old_content: str,
         new_content: str,
     ) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+        """하위 호환용 — save_message(action='update')로 대체 권장."""
+        log.info("[EDIT] msg=%s: %s", message_id, new_content[:80])
+        # message_id로 원본 메시지 정보 조회 후 update 행 삽입
         async with self.pool.acquire() as conn:
-            await conn.execute(
-                """
-                INSERT INTO message_edits (message_id, old_content, new_content, edited_at)
-                VALUES ($1, $2, $3, $4)
-                """,
+            row = await conn.fetchrow(
+                "SELECT guild_id, channel_id, channel_name, author_id, author_name, attachments FROM messages WHERE message_id = $1 ORDER BY id DESC LIMIT 1",
                 message_id,
-                old_content,
-                new_content,
-                now,
             )
+            if row:
+                await conn.execute(
+                    """
+                    INSERT INTO messages
+                        (message_id, guild_id, channel_id, channel_name,
+                         author_id, author_name, content, attachments, action, created_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'update', $9)
+                    """,
+                    message_id,
+                    row["guild_id"], row["channel_id"], row["channel_name"],
+                    row["author_id"], row["author_name"],
+                    new_content,
+                    row["attachments"],
+                    datetime.now(timezone.utc).isoformat(),
+                )
 
     async def save_delete(self, message_id: str) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+        log.info("[DELETE] msg=%s", message_id)
         async with self.pool.acquire() as conn:
-            await conn.execute(
-                """
-                INSERT INTO message_deletes (message_id, deleted_at)
-                VALUES ($1, $2)
-                """,
+            row = await conn.fetchrow(
+                "SELECT guild_id, channel_id, channel_name, author_id, author_name, content, attachments FROM messages WHERE message_id = $1 ORDER BY id DESC LIMIT 1",
                 message_id,
-                now,
             )
+            if row:
+                await conn.execute(
+                    """
+                    INSERT INTO messages
+                        (message_id, guild_id, channel_id, channel_name,
+                         author_id, author_name, content, attachments, action, created_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'delete', $9)
+                    """,
+                    message_id,
+                    row["guild_id"], row["channel_id"], row["channel_name"],
+                    row["author_id"], row["author_name"],
+                    row["content"],
+                    row["attachments"],
+                    datetime.now(timezone.utc).isoformat(),
+                )
 
     # ── Log channel settings ──
 
@@ -226,6 +234,7 @@ class PostgreSQLDatabase(AbstractDatabase):
         details: dict,
         occurred_at: datetime,
     ) -> None:
+        log.info("[EVENT] %s | actor=%s target=%s", event_type, actor_name, target_name)
         async with self.pool.acquire() as conn:
             await conn.execute(
                 """

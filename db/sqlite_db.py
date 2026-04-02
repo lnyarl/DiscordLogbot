@@ -32,7 +32,7 @@ class SQLiteDatabase(AbstractDatabase):
         await self.conn.executescript("""
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                message_id TEXT UNIQUE NOT NULL,
+                message_id TEXT NOT NULL,
                 guild_id TEXT NOT NULL,
                 channel_id TEXT NOT NULL,
                 channel_name TEXT NOT NULL,
@@ -40,21 +40,8 @@ class SQLiteDatabase(AbstractDatabase):
                 author_name TEXT NOT NULL,
                 content TEXT NOT NULL,
                 attachments TEXT NOT NULL DEFAULT '[]',
+                action TEXT NOT NULL DEFAULT 'add',
                 created_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS message_edits (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                message_id TEXT NOT NULL,
-                old_content TEXT NOT NULL,
-                new_content TEXT NOT NULL,
-                edited_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS message_deletes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                message_id TEXT NOT NULL,
-                deleted_at TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS log_channels (
@@ -71,10 +58,8 @@ class SQLiteDatabase(AbstractDatabase):
                 ON messages (guild_id, author_id);
             CREATE INDEX IF NOT EXISTS idx_messages_created_at
                 ON messages (created_at);
-            CREATE INDEX IF NOT EXISTS idx_edits_message_id
-                ON message_edits (message_id);
-            CREATE INDEX IF NOT EXISTS idx_deletes_message_id
-                ON message_deletes (message_id);
+            CREATE INDEX IF NOT EXISTS idx_messages_action
+                ON messages (message_id, action);
 
             CREATE TABLE IF NOT EXISTS guild_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -107,24 +92,19 @@ class SQLiteDatabase(AbstractDatabase):
         content: str,
         attachments: list[dict],
         created_at: datetime,
+        action: str = "add",
     ) -> None:
         await self.conn.execute(
             """
-            INSERT OR IGNORE INTO messages
+            INSERT INTO messages
                 (message_id, guild_id, channel_id, channel_name,
-                 author_id, author_name, content, attachments, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 author_id, author_name, content, attachments, action, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                message_id,
-                guild_id,
-                channel_id,
-                channel_name,
-                author_id,
-                author_name,
-                content,
-                json.dumps(attachments),
-                created_at.isoformat(),
+                message_id, guild_id, channel_id, channel_name,
+                author_id, author_name, content,
+                json.dumps(attachments), action, created_at.isoformat(),
             ),
         )
         await self.conn.commit()
@@ -135,26 +115,40 @@ class SQLiteDatabase(AbstractDatabase):
         old_content: str,
         new_content: str,
     ) -> None:
-        now = datetime.now(timezone.utc).isoformat()
-        await self.conn.execute(
-            """
-            INSERT INTO message_edits (message_id, old_content, new_content, edited_at)
-            VALUES (?, ?, ?, ?)
-            """,
-            (message_id, old_content, new_content, now),
+        cursor = await self.conn.execute(
+            "SELECT guild_id, channel_id, channel_name, author_id, author_name, attachments FROM messages WHERE message_id = ? ORDER BY id DESC LIMIT 1",
+            (message_id,),
         )
-        await self.conn.commit()
+        row = await cursor.fetchone()
+        if row:
+            await self.conn.execute(
+                """
+                INSERT INTO messages
+                    (message_id, guild_id, channel_id, channel_name,
+                     author_id, author_name, content, attachments, action, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'update', ?)
+                """,
+                (message_id, row[0], row[1], row[2], row[3], row[4], new_content, row[5], datetime.now(timezone.utc).isoformat()),
+            )
+            await self.conn.commit()
 
     async def save_delete(self, message_id: str) -> None:
-        now = datetime.now(timezone.utc).isoformat()
-        await self.conn.execute(
-            """
-            INSERT INTO message_deletes (message_id, deleted_at)
-            VALUES (?, ?)
-            """,
-            (message_id, now),
+        cursor = await self.conn.execute(
+            "SELECT guild_id, channel_id, channel_name, author_id, author_name, content, attachments FROM messages WHERE message_id = ? ORDER BY id DESC LIMIT 1",
+            (message_id,),
         )
-        await self.conn.commit()
+        row = await cursor.fetchone()
+        if row:
+            await self.conn.execute(
+                """
+                INSERT INTO messages
+                    (message_id, guild_id, channel_id, channel_name,
+                     author_id, author_name, content, attachments, action, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'delete', ?)
+                """,
+                (message_id, row[0], row[1], row[2], row[3], row[4], row[5], row[6], datetime.now(timezone.utc).isoformat()),
+            )
+            await self.conn.commit()
 
     # ── Log channel settings ──
 

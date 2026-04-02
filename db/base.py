@@ -28,6 +28,7 @@ class AbstractDatabase(ABC):
         content: str,
         attachments: list[dict],  # [{url, filename, content_type, size}]
         created_at: datetime,
+        action: str = "add",
     ) -> None: ...
 
     @abstractmethod

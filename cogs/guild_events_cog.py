@@ -283,40 +283,66 @@ class GuildEventsCog(commands.Cog):
         before: discord.VoiceState,
         after: discord.VoiceState,
     ):
-        # 채널 이동이 없으면 (음소거/카메라 등 상태만 변경) 무시
-        if before.channel == after.channel:
-            return
+        # 채널 이동 처리
+        if before.channel != after.channel:
+            if after.channel is not None and before.channel is None:
+                event_type = "voice_join"
+                target_id = str(after.channel.id)
+                target_name = after.channel.name
+                details: dict = {}
+            elif before.channel is not None and after.channel is None:
+                event_type = "voice_leave"
+                target_id = str(before.channel.id)
+                target_name = before.channel.name
+                details = {}
+            else:
+                # 채널 간 이동
+                event_type = "voice_move"
+                target_id = str(after.channel.id)  # type: ignore[union-attr]
+                target_name = after.channel.name  # type: ignore[union-attr]
+                details = {
+                    "from_channel_id": str(before.channel.id),  # type: ignore[union-attr]
+                    "from_channel_name": before.channel.name,  # type: ignore[union-attr]
+                }
 
-        if after.channel is not None and before.channel is None:
-            event_type = "voice_join"
-            target_id = str(after.channel.id)
-            target_name = after.channel.name
-            details: dict = {}
-        elif before.channel is not None and after.channel is None:
-            event_type = "voice_leave"
-            target_id = str(before.channel.id)
-            target_name = before.channel.name
-            details = {}
-        else:
-            # 채널 간 이동
-            event_type = "voice_move"
-            target_id = str(after.channel.id)  # type: ignore[union-attr]
-            target_name = after.channel.name  # type: ignore[union-attr]
-            details = {
-                "from_channel_id": str(before.channel.id),  # type: ignore[union-attr]
-                "from_channel_name": before.channel.name,  # type: ignore[union-attr]
-            }
+            await self.db.save_guild_event(
+                event_type=event_type,
+                guild_id=str(member.guild.id),
+                actor_id=str(member.id),
+                actor_name=str(member),
+                target_id=target_id,
+                target_name=target_name,
+                details=details,
+                occurred_at=datetime.now(timezone.utc),
+            )
 
-        await self.db.save_guild_event(
-            event_type=event_type,
-            guild_id=str(member.guild.id),
-            actor_id=str(member.id),
-            actor_name=str(member),
-            target_id=target_id,
-            target_name=target_name,
-            details=details,
-            occurred_at=datetime.now(timezone.utc),
-        )
+        # 음소거/카메라/스트리밍 등 상태 변경 처리
+        voice_changes: dict = {}
+        if before.self_mute != after.self_mute:
+            voice_changes["self_mute"] = {"before": before.self_mute, "after": after.self_mute}
+        if before.self_deaf != after.self_deaf:
+            voice_changes["self_deaf"] = {"before": before.self_deaf, "after": after.self_deaf}
+        if before.mute != after.mute:
+            voice_changes["mute"] = {"before": before.mute, "after": after.mute}
+        if before.deaf != after.deaf:
+            voice_changes["deaf"] = {"before": before.deaf, "after": after.deaf}
+        if before.self_stream != after.self_stream:
+            voice_changes["self_stream"] = {"before": before.self_stream, "after": after.self_stream}
+        if before.self_video != after.self_video:
+            voice_changes["self_video"] = {"before": before.self_video, "after": after.self_video}
+
+        if voice_changes:
+            channel = after.channel or before.channel
+            await self.db.save_guild_event(
+                event_type="voice_state_change",
+                guild_id=str(member.guild.id),
+                actor_id=str(member.id),
+                actor_name=str(member),
+                target_id=str(channel.id) if channel else None,
+                target_name=channel.name if channel else None,
+                details={"changes": voice_changes},
+                occurred_at=datetime.now(timezone.utc),
+            )
 
     # ── 스레드 ──
 
@@ -339,6 +365,43 @@ class GuildEventsCog(commands.Cog):
         )
 
     @commands.Cog.listener()
+    async def on_thread_update(self, before: discord.Thread, after: discord.Thread):
+        changes: dict = {}
+        if before.name != after.name:
+            changes["name"] = {"before": before.name, "after": after.name}
+        if before.archived != after.archived:
+            changes["archived"] = {"before": before.archived, "after": after.archived}
+        if before.locked != after.locked:
+            changes["locked"] = {"before": before.locked, "after": after.locked}
+        if before.slowmode_delay != after.slowmode_delay:
+            changes["slowmode_delay"] = {
+                "before": before.slowmode_delay,
+                "after": after.slowmode_delay,
+            }
+        if before.auto_archive_duration != after.auto_archive_duration:
+            changes["auto_archive_duration"] = {
+                "before": before.auto_archive_duration,
+                "after": after.auto_archive_duration,
+            }
+
+        if not changes:
+            return
+
+        await self.db.save_guild_event(
+            event_type="thread_update",
+            guild_id=str(after.guild.id),
+            actor_id=None,
+            actor_name=None,
+            target_id=str(after.id),
+            target_name=after.name,
+            details={
+                "parent_id": str(after.parent_id),
+                "changes": changes,
+            },
+            occurred_at=datetime.now(timezone.utc),
+        )
+
+    @commands.Cog.listener()
     async def on_thread_delete(self, thread: discord.Thread):
         await self.db.save_guild_event(
             event_type="thread_delete",
@@ -348,6 +411,48 @@ class GuildEventsCog(commands.Cog):
             target_id=str(thread.id),
             target_name=thread.name,
             details={"parent_id": str(thread.parent_id)},
+            occurred_at=datetime.now(timezone.utc),
+        )
+
+    @commands.Cog.listener()
+    async def on_thread_member_join(self, member: discord.ThreadMember):
+        thread = member.thread
+        if thread is None or thread.guild is None:
+            return
+
+        await self.db.save_guild_event(
+            event_type="thread_member_join",
+            guild_id=str(thread.guild.id),
+            actor_id=str(member.id),
+            actor_name=None,
+            target_id=str(thread.id),
+            target_name=thread.name,
+            details={
+                "thread_id": str(thread.id),
+                "thread_name": thread.name,
+                "user_id": str(member.id),
+            },
+            occurred_at=datetime.now(timezone.utc),
+        )
+
+    @commands.Cog.listener()
+    async def on_thread_member_remove(self, member: discord.ThreadMember):
+        thread = member.thread
+        if thread is None or thread.guild is None:
+            return
+
+        await self.db.save_guild_event(
+            event_type="thread_member_remove",
+            guild_id=str(thread.guild.id),
+            actor_id=str(member.id),
+            actor_name=None,
+            target_id=str(thread.id),
+            target_name=thread.name,
+            details={
+                "thread_id": str(thread.id),
+                "thread_name": thread.name,
+                "user_id": str(member.id),
+            },
             occurred_at=datetime.now(timezone.utc),
         )
 
@@ -397,6 +502,141 @@ class GuildEventsCog(commands.Cog):
                 "channel_id": str(reaction.message.channel.id),
                 "emoji": emoji,
                 "message_id": str(reaction.message.id),
+            },
+            occurred_at=datetime.now(timezone.utc),
+        )
+
+    @commands.Cog.listener()
+    async def on_reaction_clear(self, message: discord.Message, reactions: list[discord.Reaction]):
+        guild = getattr(message, "guild", None)
+        if guild is None:
+            return
+
+        await self.db.save_guild_event(
+            event_type="reaction_clear",
+            guild_id=str(guild.id),
+            actor_id=None,
+            actor_name=None,
+            target_id=str(message.id),
+            target_name=None,
+            details={
+                "channel_id": str(message.channel.id),
+                "message_id": str(message.id),
+                "cleared_reactions": [
+                    {"emoji": str(r.emoji), "count": r.count} for r in reactions
+                ],
+            },
+            occurred_at=datetime.now(timezone.utc),
+        )
+
+    @commands.Cog.listener()
+    async def on_reaction_clear_emoji(self, reaction: discord.Reaction):
+        guild = getattr(reaction.message, "guild", None)
+        if guild is None:
+            return
+
+        await self.db.save_guild_event(
+            event_type="reaction_clear_emoji",
+            guild_id=str(guild.id),
+            actor_id=None,
+            actor_name=None,
+            target_id=str(reaction.message.id),
+            target_name=str(reaction.emoji),
+            details={
+                "channel_id": str(reaction.message.channel.id),
+                "message_id": str(reaction.message.id),
+                "emoji": str(reaction.emoji),
+                "count": reaction.count,
+            },
+            occurred_at=datetime.now(timezone.utc),
+        )
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
+        # 캐시에 메시지가 있으면 on_reaction_add가 처리하므로 무시
+        if payload.cached_message is not None:
+            return
+        if payload.guild_id is None:
+            return
+        # 봇이면 무시
+        if payload.member is not None and payload.member.bot:
+            return
+
+        await self.db.save_guild_event(
+            event_type="reaction_add",
+            guild_id=str(payload.guild_id),
+            actor_id=str(payload.user_id),
+            actor_name=str(payload.member) if payload.member else None,
+            target_id=str(payload.message_id),
+            target_name=str(payload.emoji),
+            details={
+                "channel_id": str(payload.channel_id),
+                "message_id": str(payload.message_id),
+                "emoji": str(payload.emoji),
+                "user_id": str(payload.user_id),
+            },
+            occurred_at=datetime.now(timezone.utc),
+        )
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent):
+        # 캐시에 메시지가 있으면 on_reaction_remove가 처리하므로 무시
+        if payload.cached_message is not None:
+            return
+        if payload.guild_id is None:
+            return
+
+        await self.db.save_guild_event(
+            event_type="reaction_remove",
+            guild_id=str(payload.guild_id),
+            actor_id=str(payload.user_id),
+            actor_name=None,
+            target_id=str(payload.message_id),
+            target_name=str(payload.emoji),
+            details={
+                "channel_id": str(payload.channel_id),
+                "message_id": str(payload.message_id),
+                "emoji": str(payload.emoji),
+                "user_id": str(payload.user_id),
+            },
+            occurred_at=datetime.now(timezone.utc),
+        )
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_clear(self, payload: discord.RawReactionClearEvent):
+        if payload.guild_id is None:
+            return
+
+        await self.db.save_guild_event(
+            event_type="reaction_clear",
+            guild_id=str(payload.guild_id),
+            actor_id=None,
+            actor_name=None,
+            target_id=str(payload.message_id),
+            target_name=None,
+            details={
+                "channel_id": str(payload.channel_id),
+                "message_id": str(payload.message_id),
+            },
+            occurred_at=datetime.now(timezone.utc),
+        )
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_clear_emoji(self, payload: discord.RawReactionClearEmojiEvent):
+        if payload.guild_id is None:
+            return
+
+        await self.db.save_guild_event(
+            event_type="reaction_clear_emoji",
+            guild_id=str(payload.guild_id),
+            actor_id=None,
+            actor_name=None,
+            target_id=str(payload.message_id),
+            target_name=str(payload.emoji),
+            details={
+                "channel_id": str(payload.channel_id),
+                "message_id": str(payload.message_id),
+                "emoji": str(payload.emoji),
             },
             occurred_at=datetime.now(timezone.utc),
         )
@@ -472,6 +712,105 @@ class GuildEventsCog(commands.Cog):
             details={
                 "added": [{"id": str(e.id), "name": e.name} for e in added],
                 "removed": [{"id": str(e.id), "name": e.name} for e in removed],
+            },
+            occurred_at=datetime.now(timezone.utc),
+        )
+
+    # ── 스티커 ──
+
+    @commands.Cog.listener()
+    async def on_guild_stickers_update(
+        self,
+        guild: discord.Guild,
+        before: list[discord.GuildSticker],
+        after: list[discord.GuildSticker],
+    ):
+        before_ids = {s.id: s for s in before}
+        after_ids = {s.id: s for s in after}
+
+        added = [s for s in after if s.id not in before_ids]
+        removed = [s for s in before if s.id not in after_ids]
+
+        if not added and not removed:
+            return
+
+        await self.db.save_guild_event(
+            event_type="stickers_update",
+            guild_id=str(guild.id),
+            actor_id=None,
+            actor_name=None,
+            target_id=None,
+            target_name=None,
+            details={
+                "added": [{"id": str(s.id), "name": s.name} for s in added],
+                "removed": [{"id": str(s.id), "name": s.name} for s in removed],
+            },
+            occurred_at=datetime.now(timezone.utc),
+        )
+
+    # ── 유저 ──
+
+    @commands.Cog.listener()
+    async def on_user_update(self, before: discord.User, after: discord.User):
+        changes: dict = {}
+        if before.name != after.name:
+            changes["name"] = {"before": before.name, "after": after.name}
+        if before.global_name != after.global_name:
+            changes["global_name"] = {"before": before.global_name, "after": after.global_name}
+        if before.avatar != after.avatar:
+            changes["avatar"] = {
+                "before": str(before.avatar.url) if before.avatar else None,
+                "after": str(after.avatar.url) if after.avatar else None,
+            }
+
+        if not changes:
+            return
+
+        mutual = after.mutual_guilds
+        guild_id = str(mutual[0].id) if mutual else "0"
+
+        await self.db.save_guild_event(
+            event_type="user_update",
+            guild_id=guild_id,
+            actor_id=str(after.id),
+            actor_name=str(after),
+            target_id=None,
+            target_name=None,
+            details={"changes": changes},
+            occurred_at=datetime.now(timezone.utc),
+        )
+
+    # ── 서버 참가/탈퇴 ──
+
+    @commands.Cog.listener()
+    async def on_guild_join(self, guild: discord.Guild):
+        await self.db.save_guild_event(
+            event_type="guild_join",
+            guild_id=str(guild.id),
+            actor_id=str(self.bot.user.id) if self.bot.user else None,
+            actor_name=str(self.bot.user) if self.bot.user else None,
+            target_id=str(guild.id),
+            target_name=guild.name,
+            details={
+                "guild_name": guild.name,
+                "member_count": guild.member_count,
+                "owner_id": str(guild.owner_id),
+            },
+            occurred_at=datetime.now(timezone.utc),
+        )
+
+    @commands.Cog.listener()
+    async def on_guild_remove(self, guild: discord.Guild):
+        await self.db.save_guild_event(
+            event_type="guild_remove",
+            guild_id=str(guild.id),
+            actor_id=str(self.bot.user.id) if self.bot.user else None,
+            actor_name=str(self.bot.user) if self.bot.user else None,
+            target_id=str(guild.id),
+            target_name=guild.name,
+            details={
+                "guild_name": guild.name,
+                "member_count": guild.member_count,
             },
             occurred_at=datetime.now(timezone.utc),
         )

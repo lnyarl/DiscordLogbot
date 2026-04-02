@@ -67,6 +67,12 @@ main { max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
   border-radius: 6px; color: #e0e0e0; font-size: .9rem;
 }
 
+.toggle-events {
+  display: flex; align-items: center; gap: .4rem;
+  font-size: .9rem; color: #aaa; cursor: pointer; user-select: none;
+}
+.toggle-events input { cursor: pointer; }
+
 .results-info { color: #aaa; font-size: .9rem; }
 
 .results { display: flex; flex-direction: column; gap: .75rem; }
@@ -83,5 +89,16 @@ main { max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
 .result-meta .author { color: #faa61a; }
 .result-content { line-height: 1.6; word-break: break-word; }
 .result-content mark { background: #faa61a33; color: #faa61a; border-radius: 2px; }
+.result-meta .event-type {
+  background: #5865f2; color: #fff; padding: .1rem .5rem;
+  border-radius: 4px; font-weight: 600; font-size: .75rem;
+}
+.event-details { color: #aaa; font-size: .85rem; }
+.msg-action {
+  padding: .1rem .5rem; border-radius: 4px;
+  font-weight: 600; font-size: .75rem; color: #fff;
+}
+.msg-action-update { background: #faa61a; }
+.msg-action-delete { background: #ed4245; }
 
 .pagination { display: flex; gap: .4rem; flex-wrap: wrap; }

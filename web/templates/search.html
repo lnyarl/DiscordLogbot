@@ -14,6 +14,7 @@
     <select id="filter-channel">
       <option value="">모든 채널</option>
     </select>
+    <label class="toggle-events"><input type="checkbox" id="show-events"> 이벤트 포함</label>
   </div>
 
   <div id="results-info" class="results-info"></div>
@@ -25,12 +26,30 @@
 let allChannels = [];
 let currentPage = 1;
 
+function pushState() {
+  const params = new URLSearchParams();
+  const guildId = document.getElementById('filter-guild').value;
+  const channelId = document.getElementById('filter-channel').value;
+  const q = document.getElementById('query').value.trim();
+  const showEvents = document.getElementById('show-events').checked;
+  if (guildId) params.set('guild', guildId);
+  if (channelId) params.set('channel', channelId);
+  if (q) params.set('q', q);
+  if (currentPage > 1) params.set('page', currentPage);
+  if (showEvents) params.set('events', '1');
+  const qs = params.toString();
+  history.replaceState(null, '', '/search' + (qs ? '?' + qs : ''));
+}
+
+function getUrlParams() {
+  return new URLSearchParams(location.search);
+}
+
 async function loadChannels() {
   const res = await fetch('/api/channels');
   const data = await res.json();
   allChannels = data.channels || [];
 
-  // 서버 목록
   const guilds = [...new Map(allChannels.map(c => [c.guild_id, c.guild_name])).entries()];
   const guildSel = document.getElementById('filter-guild');
   guilds.forEach(([id, name]) => {
@@ -40,8 +59,32 @@ async function loadChannels() {
     guildSel.appendChild(opt);
   });
 
-  guildSel.addEventListener('change', updateChannelFilter);
-  document.getElementById('filter-channel').addEventListener('change', onChannelSelect);
+  guildSel.addEventListener('change', () => { updateChannelFilter(); pushState(); onChannelSelect(); });
+  document.getElementById('filter-channel').addEventListener('change', () => { pushState(); onChannelSelect(); });
+
+  // URL에서 상태 복원
+  const params = getUrlParams();
+  const savedGuild = params.get('guild');
+  const savedChannel = params.get('channel');
+  const savedQ = params.get('q');
+  const savedPage = parseInt(params.get('page')) || 1;
+
+  if (savedGuild) {
+    guildSel.value = savedGuild;
+    updateChannelFilter();
+  }
+  if (savedChannel) {
+    document.getElementById('filter-channel').value = savedChannel;
+  }
+  if (params.get('events') === '1') {
+    document.getElementById('show-events').checked = true;
+  }
+  if (savedQ) {
+    document.getElementById('query').value = savedQ;
+    doSearch(savedPage);
+  } else if (savedChannel) {
+    loadRecent(savedChannel, savedPage);
+  }
 }
 
 function updateChannelFilter() {
@@ -61,15 +104,17 @@ async function onChannelSelect() {
   const channelId = document.getElementById('filter-channel').value;
   if (!channelId) return;
   const q = document.getElementById('query').value.trim();
-  if (q) return; // 검색어가 있으면 검색 우선
+  if (q) return;
   await loadRecent(channelId);
 }
 
 async function loadRecent(channelId, page = 1) {
   currentPage = page;
   window._recentChannelId = channelId;
-  const params = new URLSearchParams({ channel_id: channelId, page });
-  const res = await fetch('/api/recent?' + params);
+  pushState();
+  const params = new URLSearchParams({ q: '', channel_id: channelId, page });
+  if (document.getElementById('show-events').checked) params.set('include_events', '1');
+  const res = await fetch('/api/search?' + params);
   if (res.status === 401) { location.href = '/'; return; }
   if (res.status === 403) { showError('접근 권한이 없는 채널입니다.'); return; }
   const data = await res.json();
@@ -78,15 +123,16 @@ async function loadRecent(channelId, page = 1) {
 
 async function doSearch(page = 1) {
   const q = document.getElementById('query').value.trim();
-  if (!q) return;
 
   currentPage = page;
+  pushState();
   const guildId = document.getElementById('filter-guild').value;
   const channelId = document.getElementById('filter-channel').value;
 
   const params = new URLSearchParams({ q, page });
   if (channelId) params.set('channel_id', channelId);
   else if (guildId) params.set('guild_id', guildId);
+  if (document.getElementById('show-events').checked) params.set('include_events', '1');
 
   const res = await fetch('/api/search?' + params);
   if (res.status === 401) { location.href = '/'; return; }
@@ -109,21 +155,38 @@ function renderResults(data, q) {
   data.results.forEach(r => {
     const el = document.createElement('div');
     el.className = 'result-item';
-    // r.content를 먼저 이스케이프한 뒤 <mark> 태그 삽입 (XSS 방지)
-    const safeContent = escHtml(r.content);
-    const highlighted = q ? safeContent.replace(
-      new RegExp(escHtml(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'),
-      m => `<mark>${m}</mark>`
-    ) : safeContent;
-    el.innerHTML = `
-      <div class="result-meta">
-        <span class="guild">${escHtml(r.guild_name)}</span>
-        <span class="channel">#${escHtml(r.channel_name)}</span>
-        <span class="author">@${escHtml(r.author_name)}</span>
-        <span class="time">${new Date(r.created_at).toLocaleString('ko-KR')}</span>
-      </div>
-      <div class="result-content">${highlighted}</div>
-    `;
+
+    const ACTION_LABELS = {add: '작성', update: '수정', delete: '삭제'};
+
+    if (r.type === 'event') {
+      const parsed = typeof r.details === 'string' ? (() => { try { return JSON.parse(r.details); } catch { return {}; } })() : (r.details || {});
+      const summary = parsed.content || parsed.new_content || '';
+      el.innerHTML = `
+        <div class="result-meta">
+          <span class="event-type">${escHtml(r.event_label)}</span>
+          ${r.target_name ? `<span class="channel">#${escHtml(r.target_name)}</span>` : ''}
+          ${r.actor_name ? `<span class="author">@${escHtml(r.actor_name)}</span>` : ''}
+          <span class="time">${new Date(r.occurred_at).toLocaleString('ko-KR')}</span>
+        </div>
+        ${summary ? `<div class="result-content event-details">${escHtml(summary)}</div>` : ''}
+      `;
+    } else {
+      const actionLabel = ACTION_LABELS[r.action] || r.action;
+      const safeContent = escHtml(r.content);
+      const highlighted = q ? safeContent.replace(
+        new RegExp(escHtml(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'),
+        m => `<mark>${m}</mark>`
+      ) : safeContent;
+      el.innerHTML = `
+        <div class="result-meta">
+          ${r.action !== 'add' ? `<span class="msg-action msg-action-${escHtml(r.action)}">${escHtml(actionLabel)}</span>` : ''}
+          <span class="channel">#${escHtml(r.channel_name)}</span>
+          <span class="author">@${escHtml(r.author_name)}</span>
+          <span class="time">${new Date(r.created_at).toLocaleString('ko-KR')}</span>
+        </div>
+        <div class="result-content">${highlighted}</div>
+      `;
+    }
     container.appendChild(el);
   });
 
@@ -150,12 +213,19 @@ function showError(msg) {
 }
 
 function escHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 document.getElementById('btn-search').addEventListener('click', () => doSearch(1));
 document.getElementById('query').addEventListener('keydown', e => {
   if (e.key === 'Enter') doSearch(1);
+});
+document.getElementById('show-events').addEventListener('change', () => {
+  pushState();
+  const q = document.getElementById('query').value.trim();
+  if (q) doSearch(currentPage);
+  else if (window._recentChannelId) loadRecent(window._recentChannelId, currentPage);
 });
 
 loadChannels();

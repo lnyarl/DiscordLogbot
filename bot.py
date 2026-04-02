@@ -1,9 +1,16 @@
+import logging
 import os
 import sys
 
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 from db.factory import create_database
 
@@ -18,6 +25,10 @@ intents.message_content = True
 intents.members = True
 intents.reactions = True
 intents.invites = True
+intents.auto_moderation_configuration = True
+intents.auto_moderation_execution = True
+intents.guild_scheduled_events = True
+intents.moderation = True
 
 
 class LogBot(commands.Bot):
@@ -30,6 +41,9 @@ class LogBot(commands.Bot):
         await self.load_extension("cogs.logging_cog")
         await self.load_extension("cogs.admin_cog")
         await self.load_extension("cogs.guild_events_cog")
+        await self.load_extension("cogs.moderation_cog")
+        await self.load_extension("cogs.scheduled_events_cog")
+        await self.load_extension("cogs.integration_cog")
         try:
             synced = await self.tree.sync()
             print(f"Synced {len(synced)} command(s)")
