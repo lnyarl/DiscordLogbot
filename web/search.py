@@ -34,12 +34,53 @@ async def search_page(request: Request, session: str | None = Cookie(default=Non
 
 
 @router.get("/api/channels")
-async def list_channels(session: str | None = Cookie(default=None)):
+async def list_channels(request: Request, session: str | None = Cookie(default=None)):
     payload = _get_session(session)
     if not payload:
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
-    channels = payload.get("channels", [])
+    # JWT의 채널 목록으로 접근 가능한 guild 파악
+    jwt_channels = payload.get("channels", [])
+    accessible_guild_ids = {ch["guild_id"] for ch in jwt_channels}
+
+    if not accessible_guild_ids:
+        return {"channels": []}
+
+    # DB에서 실제 로깅 대상 채널 조회
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT guild_id, channel_id FROM log_channels WHERE guild_id = ANY($1::text[])",
+            list(accessible_guild_ids),
+        )
+
+    # guild_name 매핑 (JWT에서)
+    guild_names = {ch["guild_id"]: ch["guild_name"] for ch in jwt_channels}
+
+    # channel_name은 messages 테이블에서 조회하거나, DB에 없으면 channel_id 표시
+    channel_ids = [row["channel_id"] for row in rows]
+    channel_names = {}
+    if channel_ids:
+        async with pool.acquire() as conn:
+            name_rows = await conn.fetch(
+                """
+                SELECT DISTINCT ON (channel_id) channel_id, channel_name
+                FROM messages WHERE channel_id = ANY($1::text[])
+                ORDER BY channel_id, id DESC
+                """,
+                channel_ids,
+            )
+            channel_names = {r["channel_id"]: r["channel_name"] for r in name_rows}
+
+    channels = []
+    for row in rows:
+        channels.append({
+            "channel_id": row["channel_id"],
+            "channel_name": channel_names.get(row["channel_id"], row["channel_id"]),
+            "guild_id": row["guild_id"],
+            "guild_name": guild_names.get(row["guild_id"], row["guild_id"]),
+        })
+
     return {"channels": channels}
 
 

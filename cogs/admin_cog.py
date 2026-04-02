@@ -40,6 +40,34 @@ class AdminCog(commands.Cog):
             f"{channel.mention} 채널을 로깅 대상에 추가했습니다.", ephemeral=True
         )
 
+    @logbot_group.command(name="add_all", description="모든 공개 텍스트 채널을 로깅 대상에 추가합니다")
+    async def logbot_add_all(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        guild_id = str(guild.id)
+        logging_cog = self.bot.get_cog("LoggingCog")
+        count = 0
+
+        for channel in guild.text_channels:
+            # 비공개 채널(@everyone이 볼 수 없는 채널) 제외
+            overwrites = channel.overwrites_for(guild.default_role)
+            if overwrites.view_channel is False:
+                continue
+
+            channel_id = str(channel.id)
+            await self.db.add_log_channel(guild_id, channel_id)
+
+            if logging_cog:
+                try:
+                    pinned = await channel.pins()
+                    logging_cog._pinned_cache[channel_id] = {str(m.id) for m in pinned}
+                except Exception:
+                    logging_cog._pinned_cache[channel_id] = set()
+            count += 1
+
+        await interaction.response.send_message(
+            f"공개 텍스트 채널 {count}개를 로깅 대상에 추가했습니다.", ephemeral=True
+        )
+
     @logbot_group.command(name="remove", description="로깅 대상 채널을 제거합니다")
     @app_commands.describe(channel="제거할 텍스트 채널")
     async def logbot_remove(
