@@ -192,6 +192,7 @@ function renderResults(data, q) {
         new RegExp(escHtml(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'),
         m => `<mark>${m}</mark>`
       ) : withEmojis;
+      const linked = linkify(highlighted);
       const discordLink = `https://discord.com/channels/${r.guild_id}/${r.channel_id}/${r.message_id}`;
       const attachments = r.attachments || [];
       const imageExts = ['image/png','image/jpeg','image/gif','image/webp','image/svg+xml'];
@@ -217,7 +218,7 @@ function renderResults(data, q) {
           <span class="time">${new Date(r.created_at).toLocaleString('ko-KR')}</span>
           <a href="${discordLink}" target="_blank" rel="noopener" class="discord-link" title="Discord에서 보기">↗</a>
         </div>
-        <div class="result-content">${highlighted}</div>
+        <div class="result-content">${linked}</div>
         ${attachHtml}
       `;
     }
@@ -232,8 +233,9 @@ function renderResults(data, q) {
       btn.textContent = i;
       btn.className = 'btn btn-sm' + (i === currentPage ? ' active' : '');
       btn.addEventListener('click', () => {
-        if (q) doSearch(i);
-        else if (window._recentChannelId) loadRecent(window._recentChannelId, i);
+        const currentQ = document.getElementById('query').value.trim();
+        if (currentQ || !window._recentChannelId) doSearch(i);
+        else loadRecent(window._recentChannelId, i);
       });
       pagination.appendChild(btn);
     }
@@ -249,6 +251,17 @@ function showError(msg) {
 function escHtml(s) {
   if (s == null) return '';
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function linkify(html) {
+  // URL 패턴을 클릭 가능한 링크로 변환 (이미 태그 내부에 있는 URL은 건드리지 않음)
+  return html.replace(/(https?:\/\/[^\s<>"']+)/g, (url) => {
+    // 끝에 붙은 구두점 제거
+    let trailing = '';
+    const m = url.match(/([).,;:!?]+)$/);
+    if (m) { trailing = m[1]; url = url.slice(0, -trailing.length); }
+    return `<a href="${url}" target="_blank" rel="noopener">${url}</a>${trailing}`;
+  });
 }
 
 function renderEmojis(html) {
