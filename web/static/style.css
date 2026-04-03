@@ -99,6 +99,8 @@ main { max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
 }
 .discord-link:hover { color: #fff; }
 .result-content { line-height: 1.6; word-break: break-word; }
+.result-content a { color: #f2f4ff; text-decoration: underline; }
+.result-content a:hover { text-decoration: none; color: #c8d0ff; }
 .result-content mark { background: #faa61a33; color: #faa61a; border-radius: 2px; }
 .result-meta .event-type {
   background: #5865f2; color: #fff; padding: .1rem .5rem;
