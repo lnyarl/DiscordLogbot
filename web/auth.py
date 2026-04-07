@@ -1,6 +1,7 @@
 """Discord OAuth2 인증 핸들러."""
 import os
 import secrets
+import sys
 from datetime import datetime, timedelta, timezone
 
 import httpx

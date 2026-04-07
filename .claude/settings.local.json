@@ -5,7 +5,17 @@
       "Bash(mkdir -p \"C:\\\\Users\\\\lnyarl\\\\Projects\\\\DiscordLogbot\\\\.claude\\\\skills\\\\discord-feature-planner\")",
       "Bash(mkdir -p \"C:\\\\Users\\\\lnyarl\\\\Projects\\\\DiscordLogbot\\\\.claude\\\\skills\\\\discord-bot-coder\")",
       "Bash(mkdir -p \"C:\\\\Users\\\\lnyarl\\\\Projects\\\\DiscordLogbot\\\\.claude\\\\skills\\\\discord-code-reviewer\")",
-      "Bash(mkdir -p \"C:\\\\Users\\\\lnyarl\\\\Projects\\\\DiscordLogbot\\\\.claude\\\\skills\\\\discord-dev-orchestrator\")"
+      "Bash(mkdir -p \"C:\\\\Users\\\\lnyarl\\\\Projects\\\\DiscordLogbot\\\\.claude\\\\skills\\\\discord-dev-orchestrator\")",
+      "Bash(pip show:*)",
+      "Bash(pip3 show:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(python -c \"import mcp; print\\(mcp.__file__\\)\")",
+      "Bash(find /usr -name sse.py -path */mcp/*)",
+      "Bash(find /home -name sse.py -path */mcp/*)",
+      "Read(//c/Users/lnyarl/**)",
+      "Bash(python3 -c \"import mcp.server.sse as m; import inspect; print\\(inspect.getsource\\(m\\)\\)\")",
+      "Bash(python3 -c \"import mcp; print\\(mcp.__version__\\)\")"
     ]
   }
 }
