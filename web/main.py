@@ -64,7 +64,7 @@ async def shutdown():
 from web.auth import router as auth_router, TEMPLATES as auth_templates      # noqa: E402
 from web.search import router as search_router, TEMPLATES as search_templates  # noqa: E402
 from web.oauth_server import router as oauth_router  # noqa: E402
-from web.search import router as search_router       # noqa: E402
+from web.mcp_router import router as mcp_router      # noqa: E402
 
 # 봇 초대 URL을 모든 템플릿에 글로벌로 주입
 _client_id = os.getenv("DISCORD_CLIENT_ID", "")
