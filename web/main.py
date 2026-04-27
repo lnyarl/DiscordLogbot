@@ -48,10 +48,12 @@ async def startup():
     app.state.pool = await asyncpg.create_pool(DATABASE_URL)
     async with app.state.pool.acquire() as conn:
         await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_messages_content_trgm
-            ON messages USING GIN (content gin_trgm_ops)
-        """)
+        # messages 테이블은 bot 컨테이너가 생성한다. 아직 없으면 인덱스 생성을 건너뛴다.
+        if await conn.fetchval("SELECT to_regclass('public.messages')") is not None:
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_messages_content_trgm
+                ON messages USING GIN (content gin_trgm_ops)
+            """)
     from db.migrate import run_migrations
     await run_migrations(app.state.pool)
 

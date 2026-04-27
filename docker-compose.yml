@@ -73,4 +73,3 @@ networks:
   logbot-internal:
     internal: true
   stashy-network:
-    internal: true
