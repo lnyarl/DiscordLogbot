@@ -1,4 +1,5 @@
 """Discord OAuth2 인증 핸들러."""
+import logging
 import os
 import secrets
 import sys
@@ -9,6 +10,8 @@ from fastapi import APIRouter, Cookie, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from jose import JWTError, jwt
+
+log = logging.getLogger(__name__)
 
 TEMPLATES = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
 
@@ -203,32 +206,40 @@ async def callback(
     oauth_state: str | None = Cookie(default=None),
 ):
     if state != oauth_state:
+        log.warning("OAuth state mismatch: state=%s, cookie=%s", state, oauth_state)
         return HTMLResponse("Invalid state", status_code=400)
 
-    async with httpx.AsyncClient() as client:
-        # 토큰 교환
-        r = await client.post(
-            "https://discord.com/api/oauth2/token",
-            data={
-                "client_id": DISCORD_CLIENT_ID,
-                "client_secret": DISCORD_CLIENT_SECRET,
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": DISCORD_REDIRECT_URI,
-            },
-        )
-        if r.status_code != 200:
-            return RedirectResponse("/auth/login")
-        token_data = r.json()
-        access_token = token_data["access_token"]
+    try:
+        async with httpx.AsyncClient() as client:
+            # 토큰 교환
+            r = await client.post(
+                "https://discord.com/api/oauth2/token",
+                data={
+                    "client_id": DISCORD_CLIENT_ID,
+                    "client_secret": DISCORD_CLIENT_SECRET,
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "redirect_uri": DISCORD_REDIRECT_URI,
+                },
+            )
+            if r.status_code != 200:
+                log.warning("Token exchange failed: %s %s", r.status_code, r.text)
+                return RedirectResponse("/auth/login")
+            token_data = r.json()
+            access_token = token_data["access_token"]
 
-        # 유저 정보 조회
-        r = await client.get(
-            f"{DISCORD_API}/users/@me",
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
-        r.raise_for_status()
-        user = r.json()
+            # 유저 정보 조회
+            r = await client.get(
+                f"{DISCORD_API}/users/@me",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            if r.status_code != 200:
+                log.error("Discord /users/@me failed: %s %s", r.status_code, r.text)
+                return HTMLResponse("Discord 사용자 정보를 가져올 수 없습니다. 다시 시도해주세요.", status_code=502)
+            user = r.json()
+    except httpx.HTTPError as exc:
+        log.exception("OAuth callback HTTP error")
+        return HTMLResponse("Discord API 연결 실패. 잠시 후 다시 시도해주세요.", status_code=502)
 
     user_id = user["id"]
     username = user["username"]
