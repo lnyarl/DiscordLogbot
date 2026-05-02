@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -12,12 +13,17 @@ import (
 )
 
 // Attachment matches the JSON shape Python stores in messages.attachments.
+//
+// LocalPath is *string to mirror Python's `None` on download failure — Python
+// produces `"local_path": null`; an empty Go string with a regular string
+// field would produce `""`, and `omitempty` would drop the key entirely.
+// Both diverge from existing Python rows.
 type Attachment struct {
-	URL         string `json:"url"`
-	LocalPath   string `json:"local_path,omitempty"`
-	Filename    string `json:"filename"`
-	ContentType string `json:"content_type"`
-	Size        int    `json:"size"`
+	URL         string  `json:"url"`
+	LocalPath   *string `json:"local_path"`
+	Filename    string  `json:"filename"`
+	ContentType string  `json:"content_type"`
+	Size        int     `json:"size"`
 }
 
 // SaveMessageInput consolidates the args for SaveMessage to avoid a
@@ -35,10 +41,18 @@ type SaveMessageInput struct {
 	Action      string // "" → "add"
 }
 
-const isoFormat = "2006-01-02T15:04:05.999999-07:00"
-
+// Python's datetime.isoformat() omits the fractional-second segment when
+// microseconds are exactly zero, otherwise prints them with 6-digit
+// zero-padding. We mirror that branch instead of using Go's "2006-...05.999999..."
+// trim-trailing-zero format, because mixed Python+Go writers + lexicographic
+// since/until filters would otherwise miss-match boundary rows
+// (e.g. Go-saved ".5+00:00" vs Python filter ".500000+00:00" of the same instant).
 func formatTime(t time.Time) string {
-	return t.UTC().Format(isoFormat)
+	t = t.UTC()
+	if t.Nanosecond() == 0 {
+		return t.Format("2006-01-02T15:04:05-07:00")
+	}
+	return t.Format("2006-01-02T15:04:05.000000-07:00")
 }
 
 // SaveMessage inserts an "add" (default) row.
@@ -50,6 +64,9 @@ func SaveMessage(ctx context.Context, pool *pgxpool.Pool, in SaveMessageInput) e
 	if err != nil {
 		return fmt.Errorf("marshal attachments: %w", err)
 	}
+	slog.Info("save message",
+		"action", in.Action, "channel", in.ChannelName,
+		"author", in.AuthorName, "preview", preview(in.Content, 80))
 	_, err = pool.Exec(ctx, `
 		INSERT INTO messages
 			(message_id, guild_id, channel_id, channel_name,
@@ -63,10 +80,19 @@ func SaveMessage(ctx context.Context, pool *pgxpool.Pool, in SaveMessageInput) e
 	return err
 }
 
+// preview truncates s to maxLen runes (not bytes) for log output.
+func preview(s string, maxLen int) string {
+	r := []rune(s)
+	if len(r) <= maxLen {
+		return s
+	}
+	return string(r[:maxLen]) + "…"
+}
+
 // SaveEdit copies guild/channel/author/attachments from the latest existing
 // row for messageID and inserts a new "update" row with newContent. If no
 // prior row exists (cache miss / out of retention), it silently no-ops to
-// match Python's web/permissions.py — there's nothing to thread the edit to.
+// match Python's behaviour — there's nothing to thread the edit to.
 func SaveEdit(ctx context.Context, pool *pgxpool.Pool, messageID, newContent string) error {
 	var guildID, channelID, channelName, authorID, authorName, attachments string
 	err := pool.QueryRow(ctx, `
@@ -79,6 +105,7 @@ func SaveEdit(ctx context.Context, pool *pgxpool.Pool, messageID, newContent str
 	if err != nil {
 		return err
 	}
+	slog.Info("save edit", "message_id", messageID, "preview", preview(newContent, 80))
 	_, err = pool.Exec(ctx, `
 		INSERT INTO messages
 			(message_id, guild_id, channel_id, channel_name,
@@ -105,6 +132,7 @@ func SaveDelete(ctx context.Context, pool *pgxpool.Pool, messageID string) error
 	if err != nil {
 		return err
 	}
+	slog.Info("save delete", "message_id", messageID)
 	_, err = pool.Exec(ctx, `
 		INSERT INTO messages
 			(message_id, guild_id, channel_id, channel_name,

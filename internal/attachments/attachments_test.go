@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -106,15 +105,15 @@ func TestDownloadEmojis_SkipsExisting(t *testing.T) {
 	}
 }
 
-func TestEscapeLikeBehaviour_NotApplicableHere(t *testing.T) {
-	// Sanity: regex doesn't match malformed cases.
-	if CustomEmojiPattern.MatchString("<a:name:>") {
-		t.Error("empty id should not match")
-	}
-	if CustomEmojiPattern.MatchString("<:name>") {
-		t.Error("missing id should not match")
-	}
-	if !strings.HasPrefix("ok", "ok") {
-		t.Fatal("compiler ok") // keeps strings imported
+func TestCustomEmojiPattern_RejectsMalformed(t *testing.T) {
+	for _, in := range []string{
+		"<a:name:>", // empty id
+		"<:name>",   // missing id
+		"<:::>",     // structurally bad
+		"plain text",
+	} {
+		if CustomEmojiPattern.MatchString(in) {
+			t.Errorf("should not match: %q", in)
+		}
 	}
 }

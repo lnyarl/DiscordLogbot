@@ -71,6 +71,11 @@ func (d *Downloader) DownloadEmojis(ctx context.Context, content string) {
 	}
 }
 
+// fetchTo writes the URL body to a temp file in the destination directory
+// and atomically renames it into place. This prevents a partially-written
+// file from being mistaken for a complete cached download by os.Stat checks
+// in DownloadEmojis after a future restart (Python's aiohttp implementation
+// shares this risk; we fix it here in the Go translation).
 func (d *Downloader) fetchTo(ctx context.Context, url, dest string) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
@@ -87,13 +92,19 @@ func (d *Downloader) fetchTo(ctx context.Context, url, dest string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download %s: status %d", url, resp.StatusCode)
 	}
-	f, err := os.Create(dest)
+	tmp, err := os.CreateTemp(filepath.Dir(dest), "."+filepath.Base(dest)+".*")
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	if _, err := io.Copy(f, resp.Body); err != nil {
+	tmpPath := tmp.Name()
+	// Best-effort cleanup; succeeds before rename, no-op (ENOENT) after.
+	defer os.Remove(tmpPath)
+	if _, err := io.Copy(tmp, resp.Body); err != nil {
+		tmp.Close()
 		return err
 	}
-	return nil
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, dest)
 }
