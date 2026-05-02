@@ -15,6 +15,7 @@ from jose import JWTError, jwt
 from mcp.server import Server
 from mcp.server.sse import SseServerTransport
 from mcp.types import TextContent, Tool
+from starlette.responses import Response
 
 from web.auth import JWT_ALGORITHM, JWT_SECRET
 
@@ -289,6 +290,22 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
 # ── FastAPI 엔드포인트 ───────────────────────────────────────────────────────
 
+class _AlreadySentResponse(Response):
+    """SSE transport / handle_post_message가 ASGI send에 직접 응답을 쓴 뒤,
+    FastAPI 라우터가 두 번째 http.response.start를 보내려다
+    'Unexpected ASGI message' RuntimeError를 내는 것을 막기 위한 sentinel.
+
+    이 응답을 반환하면 FastAPI가 Response.__call__ 을 부르지만 no-op이라
+    추가로 송출되는 ASGI 메시지가 없다.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(content=b"", status_code=200)
+
+    async def __call__(self, scope, receive, send) -> None:  # type: ignore[override]
+        return
+
+
 @router.get("/sse")
 async def mcp_sse(
     request: Request,
@@ -339,6 +356,7 @@ async def mcp_sse(
             _session_owners.pop(sid, None)
         _channels_ctx.reset(token_c)
         _pool_ctx.reset(token_p)
+    return _AlreadySentResponse()
 
 
 @router.post("/messages")
@@ -361,3 +379,4 @@ async def mcp_messages(
         raise HTTPException(403, "Forbidden: session belongs to a different user")
 
     await sse_transport.handle_post_message(request.scope, request.receive, request._send)
+    return _AlreadySentResponse()
