@@ -102,13 +102,23 @@ async def get_accessible_channels(user_access_token: str, user_id: str) -> list[
             is_owner = guild_info.get("owner_id") == user_id
             guild_name = bot_guilds[guild_id]["name"]
 
+            # type=4 카테고리 채널만 모아 parent_id 역참조용 맵 구성
+            categories = {
+                ch["id"]: ch.get("name", "")
+                for ch in channels
+                if ch.get("type") == 4
+            }
+
             VIEW_CHANNEL = 1 << 10
             ADMINISTRATOR = 1 << 3
 
             def _entry(ch: dict) -> dict:
+                parent_id = ch.get("parent_id")
                 return {
                     "channel_id": ch["id"],
                     "channel_name": ch.get("name", ""),
+                    "category_id": parent_id,
+                    "category_name": categories.get(parent_id, "") if parent_id else "",
                     "guild_id": guild_id,
                     "guild_name": guild_name,
                 }
