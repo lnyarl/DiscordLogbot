@@ -44,6 +44,7 @@ class LogBot(commands.Bot):
         await self.load_extension("cogs.moderation_cog")
         await self.load_extension("cogs.scheduled_events_cog")
         await self.load_extension("cogs.integration_cog")
+        await self.load_extension("cogs.cache_invalidation_cog")
         self.tree.on_error = self._on_app_command_error
         try:
             synced = await self.tree.sync()
