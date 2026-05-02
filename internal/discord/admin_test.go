@@ -89,6 +89,29 @@ func TestTruncateRunes(t *testing.T) {
 	}
 }
 
+func TestFormatThousands(t *testing.T) {
+	tests := []struct {
+		in   int64
+		want string
+	}{
+		{0, "0"},
+		{1, "1"},
+		{999, "999"},
+		{1_000, "1,000"},
+		{12_345, "12,345"},
+		{123_456, "123,456"},
+		{1_234_567, "1,234,567"},
+		{1_000_000_000, "1,000,000,000"},
+		{-1_234, "-1,234"},
+		{-999, "-999"},
+	}
+	for _, tt := range tests {
+		if got := formatThousands(tt.in); got != tt.want {
+			t.Errorf("formatThousands(%d) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestLogbotCommands_TopLevelShape(t *testing.T) {
 	if len(logbotCommands) != 1 {
 		t.Fatalf("expected 1 top-level command, got %d", len(logbotCommands))
