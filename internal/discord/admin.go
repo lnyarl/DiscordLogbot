@@ -147,6 +147,9 @@ func (b *Bot) cmdAdd(ctx context.Context, s *discordgo.Session, i *discordgo.Int
 		return
 	}
 	b.Channels.Invalidate(i.GuildID)
+	// Seed pin cache so the first ChannelPinsUpdate on this channel
+	// emits a real diff instead of the "first observation" swallow.
+	b.seedChannelPins(channel.ID)
 	respond(s, i, fmt.Sprintf("<#%s> 채널을 로깅 대상에 추가했습니다.", channel.ID), true)
 }
 
@@ -181,6 +184,8 @@ func (b *Bot) cmdAddAll(ctx context.Context, s *discordgo.Session, i *discordgo.
 			slog.Error("AddLogChannel in add_all", "err", err, "channel_id", ch.ID)
 			continue
 		}
+		// Seed pin cache (same reason as cmdAdd above).
+		b.seedChannelPins(ch.ID)
 		count++
 	}
 	b.Channels.Invalidate(i.GuildID)
