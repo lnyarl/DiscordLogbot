@@ -66,11 +66,66 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - logbot-internal
+      logbot-internal:
+        aliases:
+          - postgres
     read_only: true
     tmpfs:
       - /tmp
       - /run/postgresql
+
+  # ── Go 서비스 (Phase 0 stub — 헬스 엔드포인트만) ─────────────────
+  bot-go:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        SERVICE: bot
+        PORT: "8081"
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      BOT_HEALTH_PORT: "8081"
+    depends_on:
+      logbot-postgres:
+        condition: service_healthy
+    networks:
+      - logbot-internal
+
+  web-go:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        SERVICE: web
+        PORT: "8080"
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      WEB_PORT: "8080"
+    # Phase 0 stub: 외부 노출 없음. Phase 5/9에서 stashy-network + ports 추가 예정.
+    depends_on:
+      logbot-postgres:
+        condition: service_healthy
+    networks:
+      - logbot-internal
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        SERVICE: worker
+        PORT: "8082"
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      WORKER_HEALTH_PORT: "8082"
+    depends_on:
+      logbot-postgres:
+        condition: service_healthy
+    networks:
+      - logbot-internal
 
 volumes:
   logbot_postgres_data:

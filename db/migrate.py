@@ -62,7 +62,8 @@ async def run_migrations(pool) -> None:
                     log.info("Executing: %s", statement[:80])
                     await conn.execute(statement)
                 await conn.execute(
-                    "INSERT INTO _migrations (name) VALUES ($1)", filename
+                    "INSERT INTO _migrations (name) VALUES ($1) ON CONFLICT (name) DO NOTHING",
+                    filename,
                 )
 
         log.info("Migration applied: %s", filename)

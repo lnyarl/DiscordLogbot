@@ -9,3 +9,5 @@ data/
 _workspace/
 .claude/
 README.md
+docs/
+node_modules/
