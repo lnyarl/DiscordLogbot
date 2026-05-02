@@ -46,6 +46,14 @@ func main() {
 	defer bot.Close()
 	slog.Info("bot connected to gateway")
 
+	// Sync /logbot. Empty guild id = global; use DISCORD_TEST_GUILD for
+	// instant scoped registration during development.
+	if err := bot.SyncCommands(config.Get("DISCORD_TEST_GUILD", "")); err != nil {
+		slog.Error("slash command sync failed", "err", err)
+		os.Exit(1)
+	}
+	slog.Info("slash commands synced")
+
 	// Health server runs alongside the gateway connection so docker-compose
 	// can probe readiness. We keep it on a separate port from /web to avoid
 	// the gateway connection blocking healthcheck responses.

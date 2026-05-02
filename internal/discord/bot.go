@@ -73,6 +73,7 @@ func (b *Bot) registerHandlers() {
 	b.Session.AddHandler(b.onMessageUpdate)
 	b.Session.AddHandler(b.onMessageDelete)
 	b.Session.AddHandler(b.onMessageDeleteBulk)
+	b.Session.AddHandler(b.onInteractionCreate)
 }
 
 // Open opens the gateway connection. Returns the discordgo error verbatim.
