@@ -1,0 +1,1802 @@
+[
+  {
+    "name": "owner always sees",
+    "input": {
+      "guild": {
+        "owner_id": "200",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [],
+      "channel": {
+        "id": "1",
+        "type": 0
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "everyone has VIEW",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "1024"
+          }
+        ]
+      },
+      "member_roles": [],
+      "channel": {
+        "id": "1",
+        "type": 0
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "everyone has nothing",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [],
+      "channel": {
+        "id": "1",
+        "type": 0
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": false
+  },
+  {
+    "name": "everyone overwrite deny",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "1024"
+          }
+        ]
+      },
+      "member_roles": [],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "100",
+            "type": 0,
+            "allow": "0",
+            "deny": "1024"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": false
+  },
+  {
+    "name": "everyone overwrite allow",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "100",
+            "type": 0,
+            "allow": "1024",
+            "deny": "0"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "everyone allow+deny same bit (allow wins per-overwrite)",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "1024"
+          }
+        ]
+      },
+      "member_roles": [],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "100",
+            "type": 0,
+            "allow": "1024",
+            "deny": "1024"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "role grants VIEW at server level",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          },
+          {
+            "id": "role-a",
+            "permissions": "1024"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-a"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "ADMIN role bypasses channel deny",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          },
+          {
+            "id": "role-a",
+            "permissions": "8"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-a"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "100",
+            "type": 0,
+            "allow": "0",
+            "deny": "1024"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "ADMIN role + nothing else",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          },
+          {
+            "id": "role-a",
+            "permissions": "8"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-a"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "user not in admin role",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          },
+          {
+            "id": "role-a",
+            "permissions": "8"
+          }
+        ]
+      },
+      "member_roles": [],
+      "channel": {
+        "id": "1",
+        "type": 0
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": false
+  },
+  {
+    "name": "role overwrite allow over everyone deny",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          },
+          {
+            "id": "role-a",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-a"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "100",
+            "type": 0,
+            "allow": "0",
+            "deny": "1024"
+          },
+          {
+            "id": "role-a",
+            "type": 0,
+            "allow": "1024",
+            "deny": "0"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "role overwrite deny over everyone allow",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "1024"
+          },
+          {
+            "id": "role-a",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-a"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "role-a",
+            "type": 0,
+            "allow": "0",
+            "deny": "1024"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": false
+  },
+  {
+    "name": "two roles: deny + allow on same bit (allow batch wins)",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "1024"
+          },
+          {
+            "id": "r-deny",
+            "permissions": "0"
+          },
+          {
+            "id": "r-allow",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [
+        "r-deny",
+        "r-allow"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "r-deny",
+            "type": 0,
+            "allow": "0",
+            "deny": "1024"
+          },
+          {
+            "id": "r-allow",
+            "type": 0,
+            "allow": "1024",
+            "deny": "0"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "two roles deny only → false",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "1024"
+          },
+          {
+            "id": "r1",
+            "permissions": "0"
+          },
+          {
+            "id": "r2",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [
+        "r1",
+        "r2"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "r1",
+            "type": 0,
+            "allow": "0",
+            "deny": "1024"
+          },
+          {
+            "id": "r2",
+            "type": 0,
+            "allow": "0",
+            "deny": "1024"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": false
+  },
+  {
+    "name": "user not in role with overwrite → overwrite ignored",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "1024"
+          },
+          {
+            "id": "role-a",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "role-a",
+            "type": 0,
+            "allow": "0",
+            "deny": "1024"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "member deny over role allow",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "1024"
+          },
+          {
+            "id": "role-a",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-a"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "role-a",
+            "type": 0,
+            "allow": "1024",
+            "deny": "0"
+          },
+          {
+            "id": "200",
+            "type": 1,
+            "allow": "0",
+            "deny": "1024"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": false
+  },
+  {
+    "name": "member allow over role deny",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "1024"
+          },
+          {
+            "id": "role-a",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-a"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "role-a",
+            "type": 0,
+            "allow": "0",
+            "deny": "1024"
+          },
+          {
+            "id": "200",
+            "type": 1,
+            "allow": "1024",
+            "deny": "0"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "member allow over everyone deny",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "100",
+            "type": 0,
+            "allow": "0",
+            "deny": "1024"
+          },
+          {
+            "id": "200",
+            "type": 1,
+            "allow": "1024",
+            "deny": "0"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "category deny inherits to channel",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "1024"
+          }
+        ]
+      },
+      "member_roles": [],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "parent_id": "cat-1"
+      },
+      "categories": {
+        "cat-1": {
+          "id": "cat-1",
+          "type": 4,
+          "permission_overwrites": [
+            {
+              "id": "100",
+              "type": 0,
+              "allow": "0",
+              "deny": "1024"
+            }
+          ]
+        }
+      },
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": false
+  },
+  {
+    "name": "category allow inherits to channel",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "parent_id": "cat-1"
+      },
+      "categories": {
+        "cat-1": {
+          "id": "cat-1",
+          "type": 4,
+          "permission_overwrites": [
+            {
+              "id": "100",
+              "type": 0,
+              "allow": "1024",
+              "deny": "0"
+            }
+          ]
+        }
+      },
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "channel allow overrides category deny",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "1024"
+          }
+        ]
+      },
+      "member_roles": [],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "parent_id": "cat-1",
+        "permission_overwrites": [
+          {
+            "id": "100",
+            "type": 0,
+            "allow": "1024",
+            "deny": "0"
+          }
+        ]
+      },
+      "categories": {
+        "cat-1": {
+          "id": "cat-1",
+          "type": 4,
+          "permission_overwrites": [
+            {
+              "id": "100",
+              "type": 0,
+              "allow": "0",
+              "deny": "1024"
+            }
+          ]
+        }
+      },
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "channel deny overrides category allow",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "parent_id": "cat-1",
+        "permission_overwrites": [
+          {
+            "id": "100",
+            "type": 0,
+            "allow": "0",
+            "deny": "1024"
+          }
+        ]
+      },
+      "categories": {
+        "cat-1": {
+          "id": "cat-1",
+          "type": 4,
+          "permission_overwrites": [
+            {
+              "id": "100",
+              "type": 0,
+              "allow": "1024",
+              "deny": "0"
+            }
+          ]
+        }
+      },
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": false
+  },
+  {
+    "name": "missing parent_id (orphan channel)",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "1024"
+          }
+        ]
+      },
+      "member_roles": [],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "parent_id": "ghost"
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "category role overwrite + member channel overwrite",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          },
+          {
+            "id": "role-a",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-a"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "parent_id": "cat-1",
+        "permission_overwrites": [
+          {
+            "id": "200",
+            "type": 1,
+            "allow": "1024",
+            "deny": "0"
+          }
+        ]
+      },
+      "categories": {
+        "cat-1": {
+          "id": "cat-1",
+          "type": 4,
+          "permission_overwrites": [
+            {
+              "id": "role-a",
+              "type": 0,
+              "allow": "0",
+              "deny": "1024"
+            }
+          ]
+        }
+      },
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "everyone has VIEW+ADMIN combined permission integer",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "1032"
+          }
+        ]
+      },
+      "member_roles": [],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "100",
+            "type": 0,
+            "allow": "0",
+            "deny": "1024"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "matrix everyone=0 ow_allow=0 ow_deny=0",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "100",
+            "type": 0,
+            "allow": "0",
+            "deny": "0"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": false
+  },
+  {
+    "name": "matrix everyone=0 ow_allow=0 ow_deny=1024",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "100",
+            "type": 0,
+            "allow": "0",
+            "deny": "1024"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": false
+  },
+  {
+    "name": "matrix everyone=0 ow_allow=1024 ow_deny=0",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "100",
+            "type": 0,
+            "allow": "1024",
+            "deny": "0"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "matrix everyone=0 ow_allow=1024 ow_deny=1024",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "100",
+            "type": 0,
+            "allow": "1024",
+            "deny": "1024"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "matrix everyone=1024 ow_allow=0 ow_deny=0",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "1024"
+          }
+        ]
+      },
+      "member_roles": [],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "100",
+            "type": 0,
+            "allow": "0",
+            "deny": "0"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "matrix everyone=1024 ow_allow=0 ow_deny=1024",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "1024"
+          }
+        ]
+      },
+      "member_roles": [],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "100",
+            "type": 0,
+            "allow": "0",
+            "deny": "1024"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": false
+  },
+  {
+    "name": "matrix everyone=1024 ow_allow=1024 ow_deny=0",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "1024"
+          }
+        ]
+      },
+      "member_roles": [],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "100",
+            "type": 0,
+            "allow": "1024",
+            "deny": "0"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "matrix everyone=1024 ow_allow=1024 ow_deny=1024",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "1024"
+          }
+        ]
+      },
+      "member_roles": [],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "100",
+            "type": 0,
+            "allow": "1024",
+            "deny": "1024"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "matrix role(a=0/d=0) mem(a=0/d=0)",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          },
+          {
+            "id": "role-a",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-a"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "role-a",
+            "type": 0,
+            "allow": "0",
+            "deny": "0"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": false
+  },
+  {
+    "name": "matrix role(a=0/d=0) mem(a=0/d=1024)",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          },
+          {
+            "id": "role-a",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-a"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "role-a",
+            "type": 0,
+            "allow": "0",
+            "deny": "0"
+          },
+          {
+            "id": "200",
+            "type": 1,
+            "allow": "0",
+            "deny": "1024"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": false
+  },
+  {
+    "name": "matrix role(a=0/d=0) mem(a=1024/d=0)",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          },
+          {
+            "id": "role-a",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-a"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "role-a",
+            "type": 0,
+            "allow": "0",
+            "deny": "0"
+          },
+          {
+            "id": "200",
+            "type": 1,
+            "allow": "1024",
+            "deny": "0"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "matrix role(a=0/d=0) mem(a=1024/d=1024)",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          },
+          {
+            "id": "role-a",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-a"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "role-a",
+            "type": 0,
+            "allow": "0",
+            "deny": "0"
+          },
+          {
+            "id": "200",
+            "type": 1,
+            "allow": "1024",
+            "deny": "1024"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "matrix role(a=0/d=1024) mem(a=0/d=0)",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          },
+          {
+            "id": "role-a",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-a"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "role-a",
+            "type": 0,
+            "allow": "0",
+            "deny": "1024"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": false
+  },
+  {
+    "name": "matrix role(a=0/d=1024) mem(a=0/d=1024)",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          },
+          {
+            "id": "role-a",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-a"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "role-a",
+            "type": 0,
+            "allow": "0",
+            "deny": "1024"
+          },
+          {
+            "id": "200",
+            "type": 1,
+            "allow": "0",
+            "deny": "1024"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": false
+  },
+  {
+    "name": "matrix role(a=0/d=1024) mem(a=1024/d=0)",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          },
+          {
+            "id": "role-a",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-a"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "role-a",
+            "type": 0,
+            "allow": "0",
+            "deny": "1024"
+          },
+          {
+            "id": "200",
+            "type": 1,
+            "allow": "1024",
+            "deny": "0"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "matrix role(a=0/d=1024) mem(a=1024/d=1024)",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          },
+          {
+            "id": "role-a",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-a"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "role-a",
+            "type": 0,
+            "allow": "0",
+            "deny": "1024"
+          },
+          {
+            "id": "200",
+            "type": 1,
+            "allow": "1024",
+            "deny": "1024"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "matrix role(a=1024/d=0) mem(a=0/d=0)",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          },
+          {
+            "id": "role-a",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-a"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "role-a",
+            "type": 0,
+            "allow": "1024",
+            "deny": "0"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "matrix role(a=1024/d=0) mem(a=0/d=1024)",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          },
+          {
+            "id": "role-a",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-a"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "role-a",
+            "type": 0,
+            "allow": "1024",
+            "deny": "0"
+          },
+          {
+            "id": "200",
+            "type": 1,
+            "allow": "0",
+            "deny": "1024"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": false
+  },
+  {
+    "name": "matrix role(a=1024/d=0) mem(a=1024/d=0)",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          },
+          {
+            "id": "role-a",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-a"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "role-a",
+            "type": 0,
+            "allow": "1024",
+            "deny": "0"
+          },
+          {
+            "id": "200",
+            "type": 1,
+            "allow": "1024",
+            "deny": "0"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "matrix role(a=1024/d=0) mem(a=1024/d=1024)",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          },
+          {
+            "id": "role-a",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-a"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "role-a",
+            "type": 0,
+            "allow": "1024",
+            "deny": "0"
+          },
+          {
+            "id": "200",
+            "type": 1,
+            "allow": "1024",
+            "deny": "1024"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "matrix role(a=1024/d=1024) mem(a=0/d=0)",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          },
+          {
+            "id": "role-a",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-a"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "role-a",
+            "type": 0,
+            "allow": "1024",
+            "deny": "1024"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "matrix role(a=1024/d=1024) mem(a=0/d=1024)",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          },
+          {
+            "id": "role-a",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-a"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "role-a",
+            "type": 0,
+            "allow": "1024",
+            "deny": "1024"
+          },
+          {
+            "id": "200",
+            "type": 1,
+            "allow": "0",
+            "deny": "1024"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": false
+  },
+  {
+    "name": "matrix role(a=1024/d=1024) mem(a=1024/d=0)",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          },
+          {
+            "id": "role-a",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-a"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "role-a",
+            "type": 0,
+            "allow": "1024",
+            "deny": "1024"
+          },
+          {
+            "id": "200",
+            "type": 1,
+            "allow": "1024",
+            "deny": "0"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "matrix role(a=1024/d=1024) mem(a=1024/d=1024)",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          },
+          {
+            "id": "role-a",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-a"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "permission_overwrites": [
+          {
+            "id": "role-a",
+            "type": 0,
+            "allow": "1024",
+            "deny": "1024"
+          },
+          {
+            "id": "200",
+            "type": 1,
+            "allow": "1024",
+            "deny": "1024"
+          }
+        ]
+      },
+      "categories": {},
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  }
+]
