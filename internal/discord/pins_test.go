@@ -1,10 +1,14 @@
 package discord
 
 import (
+	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"sync"
 	"testing"
+
+	"github.com/bwmarrin/discordgo"
 )
 
 func setOf(ids ...string) map[string]struct{} {
@@ -127,6 +131,34 @@ func TestPinCache_ConcurrentSetGet(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+func TestIsPinsForbidden(t *testing.T) {
+	rest403 := &discordgo.RESTError{Response: &http.Response{StatusCode: http.StatusForbidden}}
+	rest500 := &discordgo.RESTError{Response: &http.Response{StatusCode: http.StatusInternalServerError}}
+	rest429 := &discordgo.RESTError{Response: &http.Response{StatusCode: http.StatusTooManyRequests}}
+	restNoResp := &discordgo.RESTError{} // pathological: should not crash
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil error", nil, false},
+		{"plain error", errors.New("boom"), false},
+		{"REST 403", rest403, true},
+		{"REST 500 (transient)", rest500, false},
+		{"REST 429 (rate-limited)", rest429, false},
+		{"REST without Response field", restNoResp, false},
+		{"wrapped REST 403", fmt.Errorf("ctx: %w", rest403), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isPinsForbidden(tt.err); got != tt.want {
+				t.Errorf("got=%v want=%v", got, tt.want)
+			}
+		})
+	}
 }
 
 func TestFirstRunes(t *testing.T) {

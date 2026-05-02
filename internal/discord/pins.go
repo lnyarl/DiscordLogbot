@@ -2,7 +2,9 @@ package discord
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"net/http"
 	"sync"
 	"time"
 
@@ -77,6 +79,20 @@ func diffPins(prev, current map[string]struct{}) pinDiff {
 	return d
 }
 
+// isPinsForbidden reports whether err is a discordgo REST error with
+// HTTP 403. Other errors (transient network, 5xx, 429) return false so
+// callers abort instead of silently treating them as "no pins".
+func isPinsForbidden(err error) bool {
+	if err == nil {
+		return false
+	}
+	var rest *discordgo.RESTError
+	if !errors.As(err, &rest) {
+		return false
+	}
+	return rest.Response != nil && rest.Response.StatusCode == http.StatusForbidden
+}
+
 // firstRunes returns the first n runes of s, multibyte-safe. Used for
 // logging/event payloads where Python's content[:200] would slice mid-glyph.
 func firstRunes(s string, n int) string {
@@ -118,10 +134,15 @@ func (b *Bot) processPinsUpdate(ctx context.Context, e *discordgo.ChannelPinsUpd
 
 	pinned, err := b.Session.ChannelMessagesPinned(e.ChannelID)
 	if err != nil {
-		// Mirrors Python's discord.Forbidden branch: treat as "no pins
-		// visible" rather than aborting; we still want to compute removals
-		// against the previous state.
-		slog.Warn("fetch pinned messages", "err", err, "channel_id", e.ChannelID)
+		// Mirror Python's `except discord.Forbidden` precisely: only treat
+		// HTTP 403 as "no pins visible" with an empty-set fallback. Any
+		// other error (network blip, 5xx, 429) means we DON'T have ground
+		// truth, so aborting prevents falsely emitting message_unpin for
+		// every previously-cached pin.
+		if !isPinsForbidden(err) {
+			return err
+		}
+		slog.Warn("pinned messages forbidden", "channel_id", e.ChannelID)
 		pinned = nil
 	}
 	currentIDs := make(map[string]struct{}, len(pinned))
