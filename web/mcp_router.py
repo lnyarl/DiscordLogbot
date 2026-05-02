@@ -6,6 +6,7 @@ AI 클라이언트가 Bearer access token으로 인증 후 PostgreSQL 데이터�
 import json
 import re
 from contextvars import ContextVar
+from datetime import datetime, timezone
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -78,6 +79,59 @@ def _check_access(guild_id: str, channel_id: str | None = None) -> str | None:
     return None
 
 
+# ── 시간 필터 유틸 ──────────────────────────────────────────────────────────
+
+def _parse_iso_to_db_string(s: str | None) -> str | None:
+    """ISO 8601 입력을 DB 저장 형식(UTC, +00:00 offset)으로 정규화.
+
+    DB는 created_at/occurred_at을 text 타입으로 ISO 8601 string으로 저장한다.
+    Lexicographic 비교가 시간순과 일치하려면 모든 값이 같은 timezone offset
+    문자열 ('+00:00')을 가져야 하므로, 'Z' 접미사나 다른 offset이 들어와도
+    UTC로 변환해 통일한다.
+
+    Naive datetime은 UTC로 가정 (Discord 메시지/이벤트는 모두 UTC 저장).
+    """
+    if not s:
+        return None
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError as e:
+        raise ValueError(f"잘못된 ISO 8601 datetime: {s!r}") from e
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt.isoformat()
+
+
+_TIME_FILTER_SCHEMA = {
+    "since": {
+        "type": "string",
+        "description": "이 시각 이후 (ISO 8601, 예: 2026-04-25T00:00:00Z). 생략 시 제한 없음.",
+    },
+    "until": {
+        "type": "string",
+        "description": "이 시각 이전 (ISO 8601, 예: 2026-05-01T00:00:00Z). 생략 시 제한 없음.",
+    },
+}
+
+
+def _append_time_filter(
+    conditions: list[str],
+    params: list,
+    column: str,
+    since: str | None,
+    until: str | None,
+) -> None:
+    """conditions/params에 since/until SQL 절을 인덱스 순서대로 추가."""
+    if since is not None:
+        params.append(since)
+        conditions.append(f"{column} >= ${len(params)}")
+    if until is not None:
+        params.append(until)
+        conditions.append(f"{column} <= ${len(params)}")
+
+
 # ── MCP 툴 정의 ─────────────────────────────────────────────────────────────
 
 @mcp.list_tools()
@@ -90,7 +144,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="search_messages",
-            description="채널에서 키워드로 메시지 검색 (부분 일치)",
+            description="채널에서 키워드로 메시지 검색 (부분 일치). since/until로 기간 제한 가능.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -98,26 +152,28 @@ async def list_tools() -> list[Tool]:
                     "channel_id": {"type": "string", "description": "Discord 채널 ID"},
                     "keyword": {"type": "string", "description": "검색할 키워드"},
                     "limit": {"type": "integer", "default": 100, "maximum": 500},
+                    **_TIME_FILTER_SCHEMA,
                 },
                 "required": ["guild_id", "channel_id", "keyword"],
             },
         ),
         Tool(
             name="get_messages",
-            description="채널의 최근 메시지 조회",
+            description="채널의 메시지 조회. since/until 미지정 시 최신순.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "guild_id": {"type": "string"},
                     "channel_id": {"type": "string"},
                     "limit": {"type": "integer", "default": 100, "maximum": 500},
+                    **_TIME_FILTER_SCHEMA,
                 },
                 "required": ["guild_id", "channel_id"],
             },
         ),
         Tool(
             name="get_guild_events",
-            description="서버 이벤트(입퇴장, 밴, 역할 변경 등) 조회",
+            description="서버 이벤트(입퇴장, 밴, 역할 변경 등) 조회. since/until로 기간 제한 가능.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -127,6 +183,7 @@ async def list_tools() -> list[Tool]:
                         "description": "필터할 이벤트 타입 (생략 시 전체)",
                     },
                     "limit": {"type": "integer", "default": 50, "maximum": 200},
+                    **_TIME_FILTER_SCHEMA,
                 },
                 "required": ["guild_id"],
             },
@@ -157,58 +214,71 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     if err:
         return [TextContent(type="text", text=err)]
 
+    try:
+        since = _parse_iso_to_db_string(arguments.get("since"))
+        until = _parse_iso_to_db_string(arguments.get("until"))
+    except ValueError as e:
+        return [TextContent(type="text", text=str(e))]
+
     rows: list = []
     async with pool.acquire() as conn:
         if name == "search_messages":
             keyword = arguments["keyword"]
             limit = min(int(arguments.get("limit", 100)), 500)
             escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            params: list = [guild_id, channel_id, f"%{escaped}%"]
+            conditions = [
+                "guild_id = $1",
+                "channel_id = $2",
+                "lower(content) LIKE lower($3) ESCAPE '\\'",
+            ]
+            _append_time_filter(conditions, params, "created_at", since, until)
+            params.append(limit)
             rows = await conn.fetch(
-                """
+                f"""
                 SELECT channel_name, author_name, content, created_at
                 FROM messages
-                WHERE guild_id = $1 AND channel_id = $2
-                  AND lower(content) LIKE lower($3) ESCAPE '\\'
-                ORDER BY created_at DESC LIMIT $4
+                WHERE {' AND '.join(conditions)}
+                ORDER BY created_at DESC LIMIT ${len(params)}
                 """,
-                guild_id, channel_id, f"%{escaped}%", limit,
+                *params,
             )
 
         elif name == "get_messages":
             limit = min(int(arguments.get("limit", 100)), 500)
+            params = [guild_id, channel_id]
+            conditions = ["guild_id = $1", "channel_id = $2"]
+            _append_time_filter(conditions, params, "created_at", since, until)
+            params.append(limit)
             rows = await conn.fetch(
-                """
+                f"""
                 SELECT channel_name, author_name, content, created_at
                 FROM messages
-                WHERE guild_id = $1 AND channel_id = $2
-                ORDER BY created_at DESC LIMIT $3
+                WHERE {' AND '.join(conditions)}
+                ORDER BY created_at DESC LIMIT ${len(params)}
                 """,
-                guild_id, channel_id, limit,
+                *params,
             )
 
         elif name == "get_guild_events":
             limit = min(int(arguments.get("limit", 50)), 200)
             event_type = arguments.get("event_type")
+            params = [guild_id]
+            conditions = ["guild_id = $1"]
             if event_type:
-                rows = await conn.fetch(
-                    """
-                    SELECT event_type, actor_name, target_name, details, occurred_at
-                    FROM guild_events
-                    WHERE guild_id = $1 AND event_type = $2
-                    ORDER BY occurred_at DESC LIMIT $3
-                    """,
-                    guild_id, event_type, limit,
-                )
-            else:
-                rows = await conn.fetch(
-                    """
-                    SELECT event_type, actor_name, target_name, details, occurred_at
-                    FROM guild_events
-                    WHERE guild_id = $1
-                    ORDER BY occurred_at DESC LIMIT $2
-                    """,
-                    guild_id, limit,
-                )
+                params.append(event_type)
+                conditions.append(f"event_type = ${len(params)}")
+            _append_time_filter(conditions, params, "occurred_at", since, until)
+            params.append(limit)
+            rows = await conn.fetch(
+                f"""
+                SELECT event_type, actor_name, target_name, details, occurred_at
+                FROM guild_events
+                WHERE {' AND '.join(conditions)}
+                ORDER BY occurred_at DESC LIMIT ${len(params)}
+                """,
+                *params,
+            )
 
         else:
             return [TextContent(type="text", text=f"알 수 없는 툴: {name}")]
