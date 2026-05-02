@@ -310,3 +310,60 @@ func equalStr(a, b []string) bool {
 	}
 	return true
 }
+
+// ── 에러 경로 (raise_for_status 직역 검증) ──────────────────────────────────
+
+func TestComputeAccessibleChannels_BotGuildsRateLimited(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /users/@me/guilds", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	c := NewClient(ts.URL, "fake-token")
+	got, err := ComputeAccessibleChannels(context.Background(), c, "user-1")
+	if err == nil {
+		t.Fatalf("expected error on 429, got nil; result=%v", got)
+	}
+}
+
+func TestComputeAccessibleChannels_OneGuildFails_OthersSucceed(t *testing.T) {
+	view := strconv.FormatUint(PermViewChannel, 10)
+	const userID = "u1"
+	const broken = "broken"
+	const ok = "ok"
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /users/@me/guilds", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []BotGuild{{ID: broken, Name: "Broken"}, {ID: ok, Name: "OK"}})
+	})
+	mux.HandleFunc("GET /guilds/{guild}/members/{user}", func(w http.ResponseWriter, r *http.Request) {
+		// Both guilds have the user; the broken guild fails on /channels instead.
+		writeJSON(w, Member{Roles: []string{}})
+	})
+	mux.HandleFunc("GET /guilds/{guild}", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, Guild{
+			ID: r.PathValue("guild"), OwnerID: "owner",
+			Roles: []Role{{ID: r.PathValue("guild"), Permissions: view}},
+		})
+	})
+	mux.HandleFunc("GET /guilds/{guild}/channels", func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("guild") == broken {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, []Channel{{ID: "c1", Name: "ok-general", Type: channelTypeText}})
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	c := NewClient(ts.URL, "fake-token")
+	got, err := ComputeAccessibleChannels(context.Background(), c, userID)
+	if err != nil {
+		t.Fatalf("expected nil error (broken guild should be skipped), got %v", err)
+	}
+	if len(got) != 1 || got[0].ChannelID != "c1" {
+		t.Fatalf("expected one channel from the healthy guild, got %v", got)
+	}
+}

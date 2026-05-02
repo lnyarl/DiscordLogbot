@@ -65,37 +65,59 @@ type Member struct {
 	Roles []string `json:"roles"`
 }
 
+// BotGuilds mirrors Python's r.raise_for_status() — any non-200 (e.g. 429
+// rate-limit, 5xx) becomes an error so callers don't silently treat it as
+// "bot is in zero guilds" and overwrite user caches with empty results.
 func (c *Client) BotGuilds(ctx context.Context) ([]BotGuild, error) {
 	var out []BotGuild
-	if _, err := c.get(ctx, "/users/@me/guilds", &out); err != nil {
+	status, err := c.get(ctx, "/users/@me/guilds", &out)
+	if err != nil {
 		return nil, err
+	}
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("BotGuilds: unexpected status %d", status)
 	}
 	return out, nil
 }
 
+// Member returns the member object plus the raw HTTP status. 404 is a
+// signalling status (= user not in this guild) that callers branch on,
+// so it is NOT converted to error. Any other non-200 IS an error.
 func (c *Client) Member(ctx context.Context, guildID, userID string) (*Member, int, error) {
 	var m Member
 	status, err := c.get(ctx, fmt.Sprintf("/guilds/%s/members/%s", guildID, userID), &m)
-	if status != http.StatusOK {
+	if err != nil {
 		return nil, status, err
 	}
-	return &m, status, err
+	if status == http.StatusNotFound {
+		return nil, status, nil
+	}
+	if status != http.StatusOK {
+		return nil, status, fmt.Errorf("Member %s/%s: unexpected status %d", guildID, userID, status)
+	}
+	return &m, status, nil
 }
 
-func (c *Client) Channels(ctx context.Context, guildID string) ([]Channel, int, error) {
+func (c *Client) Channels(ctx context.Context, guildID string) ([]Channel, error) {
 	var out []Channel
 	status, err := c.get(ctx, fmt.Sprintf("/guilds/%s/channels", guildID), &out)
-	if status != http.StatusOK {
-		return nil, status, err
+	if err != nil {
+		return nil, err
 	}
-	return out, status, err
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("Channels %s: unexpected status %d", guildID, status)
+	}
+	return out, nil
 }
 
-func (c *Client) Guild(ctx context.Context, guildID string) (*Guild, int, error) {
+func (c *Client) Guild(ctx context.Context, guildID string) (*Guild, error) {
 	var g Guild
 	status, err := c.get(ctx, fmt.Sprintf("/guilds/%s", guildID), &g)
-	if status != http.StatusOK {
-		return nil, status, err
+	if err != nil {
+		return nil, err
 	}
-	return &g, status, err
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("Guild %s: unexpected status %d", guildID, status)
+	}
+	return &g, nil
 }

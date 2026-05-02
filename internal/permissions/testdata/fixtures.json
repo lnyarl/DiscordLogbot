@@ -857,6 +857,164 @@
     "expected": true
   },
   {
+    "name": "same role: category deny + channel allow (channel wins on the role's batch step)",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          },
+          {
+            "id": "role-a",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-a"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "parent_id": "cat-1",
+        "permission_overwrites": [
+          {
+            "id": "role-a",
+            "type": 0,
+            "allow": "1024",
+            "deny": "0"
+          }
+        ]
+      },
+      "categories": {
+        "cat-1": {
+          "id": "cat-1",
+          "type": 4,
+          "permission_overwrites": [
+            {
+              "id": "role-a",
+              "type": 0,
+              "allow": "0",
+              "deny": "1024"
+            }
+          ]
+        }
+      },
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "two roles split across category and channel (different layers, opposite directions)",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          },
+          {
+            "id": "role-deny",
+            "permissions": "0"
+          },
+          {
+            "id": "role-allow",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-deny",
+        "role-allow"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "parent_id": "cat-1",
+        "permission_overwrites": [
+          {
+            "id": "role-allow",
+            "type": 0,
+            "allow": "1024",
+            "deny": "0"
+          }
+        ]
+      },
+      "categories": {
+        "cat-1": {
+          "id": "cat-1",
+          "type": 4,
+          "permission_overwrites": [
+            {
+              "id": "role-deny",
+              "type": 0,
+              "allow": "0",
+              "deny": "1024"
+            }
+          ]
+        }
+      },
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": true
+  },
+  {
+    "name": "category member allow + channel role deny (member > role per layer)",
+    "input": {
+      "guild": {
+        "owner_id": "owner-id",
+        "roles": [
+          {
+            "id": "100",
+            "permissions": "0"
+          },
+          {
+            "id": "role-a",
+            "permissions": "0"
+          }
+        ]
+      },
+      "member_roles": [
+        "role-a"
+      ],
+      "channel": {
+        "id": "1",
+        "type": 0,
+        "parent_id": "cat-1",
+        "permission_overwrites": [
+          {
+            "id": "role-a",
+            "type": 0,
+            "allow": "0",
+            "deny": "1024"
+          }
+        ]
+      },
+      "categories": {
+        "cat-1": {
+          "id": "cat-1",
+          "type": 4,
+          "permission_overwrites": [
+            {
+              "id": "200",
+              "type": 1,
+              "allow": "1024",
+              "deny": "0"
+            }
+          ]
+        }
+      },
+      "user_id": "200",
+      "guild_id": "100"
+    },
+    "expected": false
+  },
+  {
     "name": "everyone has VIEW+ADMIN combined permission integer",
     "input": {
       "guild": {

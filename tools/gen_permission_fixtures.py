@@ -288,6 +288,46 @@ fixtures.append(make(
         ow("role-a", deny=VIEW),
     ]}},
 ))
+fixtures.append(make(
+    "same role: category deny + channel allow (channel wins on the role's batch step)",
+    guild=base_guild(everyone_perms=ZERO, extra_roles=[
+        {"id": "role-a", "permissions": ZERO},
+    ]),
+    member_roles=["role-a"],
+    channel={"id": "1", "type": 0, "parent_id": "cat-1", "permission_overwrites": [
+        ow("role-a", allow=VIEW),
+    ]},
+    categories={"cat-1": {"id": "cat-1", "type": 4, "permission_overwrites": [
+        ow("role-a", deny=VIEW),
+    ]}},
+))
+fixtures.append(make(
+    "two roles split across category and channel (different layers, opposite directions)",
+    guild=base_guild(everyone_perms=ZERO, extra_roles=[
+        {"id": "role-deny", "permissions": ZERO},
+        {"id": "role-allow", "permissions": ZERO},
+    ]),
+    member_roles=["role-deny", "role-allow"],
+    channel={"id": "1", "type": 0, "parent_id": "cat-1", "permission_overwrites": [
+        ow("role-allow", allow=VIEW),
+    ]},
+    categories={"cat-1": {"id": "cat-1", "type": 4, "permission_overwrites": [
+        ow("role-deny", deny=VIEW),
+    ]}},
+))
+fixtures.append(make(
+    "category member allow + channel role deny (member > role per layer)",
+    guild=base_guild(everyone_perms=ZERO, extra_roles=[
+        {"id": "role-a", "permissions": ZERO},
+    ]),
+    member_roles=["role-a"],
+    channel={"id": "1", "type": 0, "parent_id": "cat-1", "permission_overwrites": [
+        ow("role-a", deny=VIEW),
+    ]},
+    categories={"cat-1": {"id": "cat-1", "type": 4, "permission_overwrites": [
+        ow(USER_ID, allow=VIEW, type=1),
+    ]}},
+))
 
 
 # ── 결합 비트 (VIEW + ADMIN as one perm value) ──────────────────────────────

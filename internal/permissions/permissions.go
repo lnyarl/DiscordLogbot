@@ -50,6 +50,9 @@ type Guild struct {
 	Roles   []Role `json:"roles"`
 }
 
+// parsePerm decodes a Discord permission bitfield from its decimal-string
+// JSON form. Returns 0 for empty input (defensive — Discord always sends
+// a numeric string in practice; Python's int("") would raise ValueError).
 func parsePerm(s string) uint64 {
 	if s == "" {
 		return 0

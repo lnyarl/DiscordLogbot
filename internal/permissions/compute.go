@@ -47,16 +47,19 @@ func ComputeAccessibleChannels(ctx context.Context, c *Client, userID string) ([
 		g.Go(func() error {
 			access, err := fetchGuildAccess(gctx, c, userID, bg)
 			if err != nil {
+				// Match Python: log per-guild HTTP errors and skip the guild
+				// rather than failing the whole computation.
 				slog.Error("fetch guild failed", "guild_id", bg.ID, "err", err)
-				return nil // match Python: per-guild HTTPError → skip
+				return nil
 			}
 			results[i] = access
 			return nil
 		})
 	}
-	if err := g.Wait(); err != nil {
-		return nil, err
-	}
+	// Inner goroutines always return nil (errors are swallowed and logged
+	// above), so g.Wait() can never return an error. Call it for the
+	// barrier effect only.
+	_ = g.Wait()
 
 	var all []AccessibleChannel
 	for _, r := range results {
@@ -68,6 +71,8 @@ func ComputeAccessibleChannels(ctx context.Context, c *Client, userID string) ([
 func fetchGuildAccess(
 	ctx context.Context, c *Client, userID string, bg BotGuild,
 ) ([]AccessibleChannel, error) {
+	// Each goroutine writes to a *different* shared variable below, so no
+	// mutex is needed; errgroup.Wait acts as the happens-before barrier.
 	var (
 		member    *Member
 		memStatus int
@@ -77,28 +82,34 @@ func fetchGuildAccess(
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		m, s, err := c.Member(gctx, bg.ID, userID)
-		member, memStatus = m, s
-		// 404 is not an error — user simply not in this guild.
-		if err == nil && s != http.StatusOK && s != http.StatusNotFound {
-			return nil // other non-200: treat as skip (matches Python)
+		if err != nil {
+			return err
 		}
-		return err
+		member, memStatus = m, s
+		return nil
 	})
 	g.Go(func() error {
-		cs, _, err := c.Channels(gctx, bg.ID)
+		cs, err := c.Channels(gctx, bg.ID)
+		if err != nil {
+			return err
+		}
 		chans = cs
-		return err
+		return nil
 	})
 	g.Go(func() error {
-		gd, _, err := c.Guild(gctx, bg.ID)
+		gd, err := c.Guild(gctx, bg.ID)
+		if err != nil {
+			return err
+		}
 		guild = gd
-		return err
+		return nil
 	})
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
 
-	if memStatus == http.StatusNotFound || member == nil || chans == nil || guild == nil {
+	// 404 on Member = user not in this guild → empty result, not an error.
+	if memStatus == http.StatusNotFound || member == nil {
 		return nil, nil
 	}
 
