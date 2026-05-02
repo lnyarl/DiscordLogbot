@@ -119,18 +119,22 @@ func SaveEdit(ctx context.Context, pool *pgxpool.Pool, messageID, newContent str
 }
 
 // SaveDelete carries the latest content into the "delete" row so the
-// audit trail preserves what was actually deleted.
-func SaveDelete(ctx context.Context, pool *pgxpool.Pool, messageID string) error {
+// audit trail preserves what was actually deleted. Returns inserted=false
+// when no prior row exists (silently skipped, mirrors Python's "if row:"),
+// so a bulk-delete caller can distinguish actually-logged deletions from
+// no-ops (e.g. bot messages or messages from unlogged channels) and avoid
+// inflating the count / message_ids in the bulk_message_delete event.
+func SaveDelete(ctx context.Context, pool *pgxpool.Pool, messageID string) (inserted bool, err error) {
 	var guildID, channelID, channelName, authorID, authorName, content, attachments string
-	err := pool.QueryRow(ctx, `
+	err = pool.QueryRow(ctx, `
 		SELECT guild_id, channel_id, channel_name, author_id, author_name, content, attachments
 		FROM messages WHERE message_id = $1 ORDER BY id DESC LIMIT 1
 	`, messageID).Scan(&guildID, &channelID, &channelName, &authorID, &authorName, &content, &attachments)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 	slog.Info("save delete", "message_id", messageID)
 	_, err = pool.Exec(ctx, `
@@ -142,7 +146,10 @@ func SaveDelete(ctx context.Context, pool *pgxpool.Pool, messageID string) error
 		messageID, guildID, channelID, channelName, authorID, authorName,
 		content, attachments, formatTime(time.Now()),
 	)
-	return err
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // LatestMessageInfo holds the fields the pin-update handler needs to

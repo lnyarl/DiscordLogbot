@@ -106,7 +106,10 @@ func augmentContent(content string, atts []db.Attachment, stickers []*discordgo.
 		if content == "" {
 			content = joined
 		} else {
-			content = content + " " + joined
+			// Python: f"{content} {sticker_text}".strip(). Strip trailing
+			// whitespace from content first so trailing-space text + sticker
+			// doesn't produce a double space.
+			content = strings.TrimRight(content, " ") + " " + joined
 		}
 	}
 	return content
@@ -187,7 +190,8 @@ func (b *Bot) processDelete(ctx context.Context, m *discordgo.MessageDelete) err
 	if !logged {
 		return nil
 	}
-	return db.SaveDelete(ctx, b.Pool, m.ID)
+	_, err = db.SaveDelete(ctx, b.Pool, m.ID)
+	return err
 }
 
 // ── MessageDeleteBulk ──────────────────────────────────────────────────
@@ -212,8 +216,16 @@ func (b *Bot) processDeleteBulk(ctx context.Context, m *discordgo.MessageDeleteB
 	channelName := b.channelName(m.ChannelID)
 	processed := make([]string, 0, len(m.Messages))
 	for _, id := range m.Messages {
-		if err := db.SaveDelete(ctx, b.Pool, id); err != nil {
+		// Only count IDs that actually had a prior row to mark as deleted.
+		// Python filters bot messages explicitly via author.bot; discordgo
+		// gives us only IDs, so we let SaveDelete signal whether a row
+		// existed and skip the rest. This keeps count/message_ids honest.
+		inserted, err := db.SaveDelete(ctx, b.Pool, id)
+		if err != nil {
 			slog.Error("save delete in bulk", "err", err, "message_id", id)
+			continue
+		}
+		if !inserted {
 			continue
 		}
 		processed = append(processed, id)

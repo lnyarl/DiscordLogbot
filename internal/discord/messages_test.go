@@ -64,6 +64,11 @@ func TestAugmentContent(t *testing.T) {
 			"hi", nil, []*discordgo.StickerItem{stk("wave"), stk("thumb")},
 			"hi [스티커: wave] [스티커: thumb]",
 		},
+		{
+			"trailing-space content + sticker (no double space)",
+			"hi ", nil, []*discordgo.StickerItem{stk("wave")},
+			"hi [스티커: wave]",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
