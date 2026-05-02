@@ -32,7 +32,8 @@ func main() {
 	discord := permissions.NewClient("", config.MustGet("DISCORD_TOKEN"))
 	mcpServer := mcp.NewServer(mcp.NewDiscordLister(discord))
 	verifier := auth.NewMCPVerifier(config.MustGet("JWT_SECRET"))
-	mcpHandler := mcp.NewHandler(verifier, mcpServer)
+	// Production defaults: DNS-rebinding protection ON (opts == nil).
+	mcpHandler := mcp.NewHandler(verifier, mcpServer, nil)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", httpx.Health)

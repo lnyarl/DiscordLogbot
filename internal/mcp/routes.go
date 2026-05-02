@@ -23,6 +23,15 @@ type TokenVerifier interface {
 //  2. Session ownership: a POST /mcp/messages must come from the same
 //     user_id whose JWT opened the SSE session, otherwise the SDK would
 //     happily inject foreign messages into anyone's stream.
+//
+// REGISTER-BEFORE-SNIFF TIMING NOTE: the SDK registers a session in its
+// own internal map *before* writing the endpoint event (sse.go:259-261
+// in v1.6). Our sessionStore.Set runs from sniffWriter.Write only after
+// the SSE bytes containing "?sessionid=..." are flushed. That gap is
+// not exploitable because the session id is unguessable (rand.Text,
+// base32, ≥26 chars) and the client cannot learn it until the endpoint
+// event is delivered — at which point our store has already been
+// populated by the same goroutine that flushes those bytes.
 type Handler struct {
 	verifier TokenVerifier
 	server   *Server
@@ -30,7 +39,19 @@ type Handler struct {
 	sse      *mcpsdk.SSEHandler
 }
 
-func NewHandler(verifier TokenVerifier, srv *Server) *Handler {
+// HandlerOptions controls the SDK SSE behaviour. Defaults are production-safe:
+// DNS-rebinding protection ON. Tests using httptest.NewServer must opt out.
+type HandlerOptions struct {
+	// DisableLocalhostProtection turns off the SDK's DNS-rebinding guard.
+	// Required when the test harness binds to 127.0.0.1 with an arbitrary
+	// Host header (httptest.NewServer). Leave false in production.
+	DisableLocalhostProtection bool
+}
+
+func NewHandler(verifier TokenVerifier, srv *Server, opts *HandlerOptions) *Handler {
+	if opts == nil {
+		opts = &HandlerOptions{}
+	}
 	h := &Handler{
 		verifier: verifier,
 		server:   srv,
@@ -40,7 +61,7 @@ func NewHandler(verifier TokenVerifier, srv *Server) *Handler {
 	// from the same configured server. user_id is carried via context.
 	h.sse = mcpsdk.NewSSEHandler(
 		func(_ *http.Request) *mcpsdk.Server { return srv.SDK() },
-		&mcpsdk.SSEOptions{DisableLocalhostProtection: true},
+		&mcpsdk.SSEOptions{DisableLocalhostProtection: opts.DisableLocalhostProtection},
 	)
 	return h
 }

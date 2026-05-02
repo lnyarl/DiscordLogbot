@@ -52,7 +52,10 @@ func newTestServer(t *testing.T, lister ChannelLister) (*httptest.Server, *Handl
 	t.Helper()
 	srv := NewServer(lister)
 	verifier := auth.NewMCPVerifier(testSecret)
-	h := NewHandler(verifier, srv)
+	// httptest binds to 127.0.0.1 with a Host header that doesn't match
+	// the loopback hostname rule, so the SDK's DNS-rebinding guard would
+	// otherwise reject every request.
+	h := NewHandler(verifier, srv, &HandlerOptions{DisableLocalhostProtection: true})
 	mux := http.NewServeMux()
 	h.Routes(mux)
 	ts := httptest.NewServer(mux)
@@ -169,6 +172,33 @@ func TestSSE_RejectsMissingAuth(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status=%d, want 401", resp.StatusCode)
+	}
+}
+
+func TestSSE_RejectsAlgNoneToken(t *testing.T) {
+	ts, _ := newTestServer(t, &stubLister{})
+	// Forge an unsigned token — alg=none is the classic JWT bypass.
+	claims := auth.Claims{
+		Type: "mcp_access",
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   "alice",
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		},
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodNone, claims)
+	signed, err := tok.SignedString(jwt.UnsafeAllowNoneSignatureType)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/mcp/sse", nil)
+	req.Header.Set("Authorization", "Bearer "+signed)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want 401 (alg=none must be rejected)", resp.StatusCode)
 	}
 }
 

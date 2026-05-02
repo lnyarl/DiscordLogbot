@@ -25,6 +25,14 @@ const sniffMaxBytes = 4096
 // This is the Go analogue of Python's ASGI _send interception in
 // web/mcp_router.py — required because the SDK's SSEHandler does NOT
 // expose session_id externally.
+//
+// FAIL-CLOSED CONTRACT: if onCapture is never invoked (pattern not
+// matched within sniffMaxBytes, or SDK changes its event format), the
+// sessionStore receives no entry for this session, so every POST to it
+// will return 404 from handleMessages. That is a denial of service for
+// the affected session, but never an authorization bypass — which is
+// the security-relevant property. Compatibility regressions show up
+// immediately in TestSSE_ConcurrentConnects.
 type sniffWriter struct {
 	http.ResponseWriter
 	buf       bytes.Buffer
