@@ -6,9 +6,12 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/lnyarl/discordlogbot/internal/auth"
 	"github.com/lnyarl/discordlogbot/internal/config"
 	"github.com/lnyarl/discordlogbot/internal/db"
 	"github.com/lnyarl/discordlogbot/internal/httpx"
+	"github.com/lnyarl/discordlogbot/internal/mcp"
+	"github.com/lnyarl/discordlogbot/internal/permissions"
 )
 
 func main() {
@@ -23,12 +26,20 @@ func main() {
 	defer pool.Close()
 	slog.Info("db pool ready")
 
-	port := config.Get("WEB_PORT", "8080")
+	// Phase 2: MCP server with list_channels (no cache yet — Discord API
+	// is hit on every call). Phase 5/6 will add channel_access_cache and
+	// the remaining tools.
+	discord := permissions.NewClient("", config.MustGet("DISCORD_TOKEN"))
+	mcpServer := mcp.NewServer(mcp.NewDiscordLister(discord))
+	verifier := auth.NewMCPVerifier(config.MustGet("JWT_SECRET"))
+	mcpHandler := mcp.NewHandler(verifier, mcpServer)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", httpx.Health)
+	mcpHandler.Routes(mux)
 
-	slog.Info("web starting (Phase 0 stub)", "port", port)
+	port := config.Get("WEB_PORT", "8080")
+	slog.Info("web starting", "port", port)
 	if err := http.ListenAndServe(":"+port, mux); err != nil {
 		slog.Error("web failed", "err", err)
 		os.Exit(1)
