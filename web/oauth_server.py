@@ -225,11 +225,12 @@ async def authorize(
 @router.get("/oauth/discord_callback")
 async def discord_callback(code: str, state: str):
     """Discord 인증 완료 → 채널 권한 계산 → AI 클라이언트로 auth code 전달."""
+    t0 = time.monotonic()
     state_data = _decode_state(state)
     if not state_data:
         raise HTTPException(400, "Invalid or expired state")
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
         r = await client.post(
             "https://discord.com/api/oauth2/token",
             data={
@@ -245,6 +246,7 @@ async def discord_callback(code: str, state: str):
         discord_token = token_data.get("access_token")
         if not discord_token:
             raise HTTPException(502, "Discord did not return an access token")
+        t_token = time.monotonic()
 
         r = await client.get(
             f"{DISCORD_API}/users/@me",
@@ -252,6 +254,7 @@ async def discord_callback(code: str, state: str):
         )
         r.raise_for_status()
         user = r.json()
+        t_user = time.monotonic()
 
     user_id = user.get("id")
     username = user.get("username")
@@ -263,6 +266,17 @@ async def discord_callback(code: str, state: str):
     except Exception:
         logging.exception("채널 권한 수집 실패 (user_id=%s)", user_id)
         channels = []
+    t_channels = time.monotonic()
+
+    logging.info(
+        "discord_callback timing user_id=%s token=%.2fs identify=%.2fs channels=%.2fs total=%.2fs (channels_count=%d)",
+        user_id,
+        t_token - t0,
+        t_user - t_token,
+        t_channels - t_user,
+        t_channels - t0,
+        len(channels),
+    )
 
     auth_code = _make_auth_code(
         user_id, username, channels, state_data["cc"], state_data.get("cid", "")

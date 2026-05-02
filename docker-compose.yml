@@ -31,6 +31,12 @@ services:
     depends_on:
       logbot-postgres:
         condition: service_healthy
+    # Docker 기본 embedded DNS(127.0.0.11)가 간헐적으로 실패하는 이슈가 있어
+    # discord.com 해석 중 ConnectError → discord_callback 500 → Cloudflare 502 발생.
+    # 외부 DNS를 명시적으로 지정해 우회.
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
       interval: 10s

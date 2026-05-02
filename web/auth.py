@@ -1,4 +1,5 @@
 """Discord OAuth2 인증 핸들러."""
+import asyncio
 import logging
 import os
 import secrets
@@ -49,66 +50,76 @@ def decode_jwt(token: str) -> dict | None:
 
 
 async def get_accessible_channels(user_access_token: str, user_id: str) -> list[dict]:
-    """유저가 접근 가능한 채널 목록 반환 (봇이 로깅 중인 채널 한정)."""
+    """유저가 접근 가능한 채널 목록 반환 (봇이 로깅 중인 채널 한정).
+
+    Discord API 호출은 모두 병렬화: 길드 목록 동시 조회, 길드별 3개 엔드포인트
+    동시 조회, 모든 길드 처리 동시 실행. 길드가 많을수록 차이가 커 OAuth 콜백
+    응답이 프록시 타임아웃을 넘기지 않도록 한다.
+    """
     headers_user = {"Authorization": f"Bearer {user_access_token}"}
     headers_bot = {"Authorization": f"Bot {DISCORD_BOT_TOKEN}"}
 
-    async with httpx.AsyncClient() as client:
-        # 유저가 속한 길드 목록
-        r = await client.get(f"{DISCORD_API}/users/@me/guilds", headers=headers_user)
-        r.raise_for_status()
-        user_guilds = {g["id"] for g in r.json()}
-
-        # 봇이 있는 길드 목록
-        r = await client.get(f"{DISCORD_API}/users/@me/guilds", headers=headers_bot)
-        r.raise_for_status()
-        bot_guilds = {g["id"]: g for g in r.json()}
+    async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+        user_r, bot_r = await asyncio.gather(
+            client.get(f"{DISCORD_API}/users/@me/guilds", headers=headers_user),
+            client.get(f"{DISCORD_API}/users/@me/guilds", headers=headers_bot),
+        )
+        user_r.raise_for_status()
+        bot_r.raise_for_status()
+        user_guilds = {g["id"] for g in user_r.json()}
+        bot_guilds = {g["id"]: g for g in bot_r.json()}
 
         shared_guild_ids = user_guilds & bot_guilds.keys()
 
-        accessible = []
-        for guild_id in shared_guild_ids:
-            # 해당 길드에서 유저의 멤버 정보 조회
-            r = await client.get(
-                f"{DISCORD_API}/guilds/{guild_id}/members/{user_id}",
-                headers=headers_bot,
-            )
-            if r.status_code != 200:
-                continue
-            member = r.json()
+        async def fetch_guild(guild_id: str) -> list[dict]:
+            try:
+                member_r, channels_r, guild_r = await asyncio.gather(
+                    client.get(
+                        f"{DISCORD_API}/guilds/{guild_id}/members/{user_id}",
+                        headers=headers_bot,
+                    ),
+                    client.get(
+                        f"{DISCORD_API}/guilds/{guild_id}/channels",
+                        headers=headers_bot,
+                    ),
+                    client.get(f"{DISCORD_API}/guilds/{guild_id}", headers=headers_bot),
+                )
+            except httpx.HTTPError:
+                log.exception("Discord API 호출 실패 (guild_id=%s)", guild_id)
+                return []
+
+            if (
+                member_r.status_code != 200
+                or channels_r.status_code != 200
+                or guild_r.status_code != 200
+            ):
+                return []
+
+            member = member_r.json()
+            channels = channels_r.json()
+            guild_info = guild_r.json()
             member_roles = set(member.get("roles", []))
-
-            # 길드 채널 목록 조회
-            r = await client.get(
-                f"{DISCORD_API}/guilds/{guild_id}/channels",
-                headers=headers_bot,
-            )
-            if r.status_code != 200:
-                continue
-            channels = r.json()
-
-            # 길드 정보 (권한 계산용 owner_id)
-            r = await client.get(f"{DISCORD_API}/guilds/{guild_id}", headers=headers_bot)
-            if r.status_code != 200:
-                continue
-            guild_info = r.json()
             is_owner = guild_info.get("owner_id") == user_id
+            guild_name = bot_guilds[guild_id]["name"]
 
+            VIEW_CHANNEL = 1 << 10
+            ADMINISTRATOR = 1 << 3
+
+            def _entry(ch: dict) -> dict:
+                return {
+                    "channel_id": ch["id"],
+                    "channel_name": ch.get("name", ""),
+                    "guild_id": guild_id,
+                    "guild_name": guild_name,
+                }
+
+            result: list[dict] = []
             for ch in channels:
                 if ch.get("type") not in (0, 5):  # 0=text, 5=announcement
                     continue
                 if is_owner:
-                    accessible.append({
-                        "channel_id": ch["id"],
-                        "channel_name": ch.get("name", ""),
-                        "guild_id": guild_id,
-                        "guild_name": bot_guilds[guild_id]["name"],
-                    })
+                    result.append(_entry(ch))
                     continue
-
-                # permission_overwrites 기반 view_channel 체크 (Discord 사양 준수)
-                VIEW_CHANNEL = 1 << 10
-                ADMINISTRATOR = 1 << 3
 
                 # 1단계: @everyone role의 permissions 비트필드에서 기본 권한 시작
                 everyone_role = next(
@@ -118,12 +129,7 @@ async def get_accessible_channels(user_access_token: str, user_id: str) -> list[
 
                 # ADMINISTRATOR는 채널 overwrite와 무관하게 무조건 허용
                 if perms & ADMINISTRATOR:
-                    accessible.append({
-                        "channel_id": ch["id"],
-                        "channel_name": ch.get("name", ""),
-                        "guild_id": guild_id,
-                        "guild_name": bot_guilds[guild_id]["name"],
-                    })
+                    result.append(_entry(ch))
                     continue
 
                 # 멤버 role의 기본 permissions 합산
@@ -132,12 +138,7 @@ async def get_accessible_channels(user_access_token: str, user_id: str) -> list[
                         perms |= int(role["permissions"])
 
                 if perms & ADMINISTRATOR:
-                    accessible.append({
-                        "channel_id": ch["id"],
-                        "channel_name": ch.get("name", ""),
-                        "guild_id": guild_id,
-                        "guild_name": bot_guilds[guild_id]["name"],
-                    })
+                    result.append(_entry(ch))
                     continue
 
                 # 2단계: @everyone role channel overwrite
@@ -163,14 +164,12 @@ async def get_accessible_channels(user_access_token: str, user_id: str) -> list[
                         perms |= int(ow["allow"])
 
                 if perms & VIEW_CHANNEL:
-                    accessible.append({
-                        "channel_id": ch["id"],
-                        "channel_name": ch.get("name", ""),
-                        "guild_id": guild_id,
-                        "guild_name": bot_guilds[guild_id]["name"],
-                    })
+                    result.append(_entry(ch))
 
-    return accessible
+            return result
+
+        per_guild = await asyncio.gather(*(fetch_guild(g) for g in shared_guild_ids))
+        return [c for guild_result in per_guild for c in guild_result]
 
 
 @router.get("/", response_class=HTMLResponse)
