@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, Form, HTTPException
+from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from jose import JWTError, jwt
 
@@ -32,8 +32,8 @@ from web.auth import (
     DISCORD_CLIENT_SECRET,
     JWT_ALGORITHM,
     JWT_SECRET,
-    get_accessible_channels,
 )
+from web.permissions import compute_accessible_channels, write_cache
 
 router = APIRouter()
 
@@ -100,9 +100,12 @@ def _decode_state(token: str) -> dict | None:
 
 
 def _make_auth_code(
-    user_id: str, username: str, channels: list, code_challenge: str, client_id: str
+    user_id: str, username: str, code_challenge: str, client_id: str
 ) -> str:
-    """10분짜리 authorization code (JWT). jti로 일회성 보장."""
+    """10분짜리 authorization code (JWT). jti로 일회성 보장.
+
+    채널 권한은 더 이상 토큰에 박지 않는다 — 캐시 테이블에서 user_id로 조회.
+    """
     exp = datetime.now(timezone.utc) + timedelta(minutes=10)
     return jwt.encode(
         {
@@ -110,7 +113,6 @@ def _make_auth_code(
             "jti": secrets.token_urlsafe(16),
             "sub": user_id,
             "username": username,
-            "channels": channels,
             "cc": code_challenge,
             "cid": client_id,   # token 엔드포인트에서 재검증
             "exp": exp,
@@ -120,15 +122,15 @@ def _make_auth_code(
     )
 
 
-def make_access_token(user_id: str, username: str, channels: list) -> str:
-    """24시간짜리 MCP access token (JWT)."""
+def make_access_token(user_id: str, username: str) -> str:
+    """24시간짜리 MCP access token (JWT). 채널 권한은 토큰에 포함하지 않고
+    매 요청 시 channel_access_cache에서 user_id로 조회한다."""
     exp = datetime.now(timezone.utc) + timedelta(hours=24)
     return jwt.encode(
         {
             "type": "mcp_access",
             "sub": user_id,
             "username": username,
-            "channels": channels,
             "exp": exp,
         },
         JWT_SECRET,
@@ -223,8 +225,12 @@ async def authorize(
 
 
 @router.get("/oauth/discord_callback")
-async def discord_callback(code: str, state: str):
-    """Discord 인증 완료 → 채널 권한 계산 → AI 클라이언트로 auth code 전달."""
+async def discord_callback(code: str, state: str, request: Request):
+    """Discord 인증 완료 → 채널 권한 캐시 갱신 → AI 클라이언트로 auth code 전달.
+
+    Fresh 로그인은 캐시의 권위 있는 갱신 트리거다 — 봇 이벤트가 누락된 변경도
+    여기서 자가 치료된다. 토큰 자체에는 user_id만 들어가고 채널 목록은 캐시에서 조회.
+    """
     t0 = time.monotonic()
     state_data = _decode_state(state)
     if not state_data:
@@ -261,8 +267,11 @@ async def discord_callback(code: str, state: str):
     if not user_id or not username:
         raise HTTPException(502, "Discord did not return valid user info")
 
+    # 권한 계산 — 봇 토큰만으로 가능 (compute_accessible_channels가 user 토큰 의존성 없음).
+    # 실패해도 빈 리스트로 진행하고 캐시는 덮어쓰지 않음 → 다음 lazy fill에서 재시도.
     try:
-        channels = await get_accessible_channels(discord_token, user_id)
+        channels = await compute_accessible_channels(user_id)
+        await write_cache(request.app.state.pool, user_id, channels)
     except Exception:
         logging.exception("채널 권한 수집 실패 (user_id=%s)", user_id)
         channels = []
@@ -279,7 +288,7 @@ async def discord_callback(code: str, state: str):
     )
 
     auth_code = _make_auth_code(
-        user_id, username, channels, state_data["cc"], state_data.get("cid", "")
+        user_id, username, state_data["cc"], state_data.get("cid", "")
     )
 
     target_uri = state_data["redirect_uri"]
@@ -335,11 +344,10 @@ async def token(
 
     sub = payload.get("sub")
     username = payload.get("username")
-    channels = payload.get("channels")
-    if not sub or username is None or channels is None:
+    if not sub or username is None:
         raise HTTPException(400, "Invalid auth code: missing claims")
 
-    access_token = make_access_token(sub, username, channels)
+    access_token = make_access_token(sub, username)
     return JSONResponse({
         "access_token": access_token,
         "token_type": "Bearer",

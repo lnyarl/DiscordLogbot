@@ -1,7 +1,8 @@
 """MCP over HTTP+SSE 서버.
 
 AI 클라이언트가 Bearer access token으로 인증 후 PostgreSQL 데이터에 접근한다.
-모든 쿼리는 JWT에 포함된 허용 채널 목록으로 필터링된다.
+권한은 token에 박지 않고 channel_access_cache 테이블에서 user_id로 조회한다 —
+봇이 Discord 게이트웨이 이벤트로 무효화 시 즉시 반영, 누락 시 6h TTL이 자가 치료.
 """
 import json
 import re
@@ -18,12 +19,13 @@ from mcp.types import TextContent, Tool
 from starlette.responses import Response
 
 from web.auth import JWT_ALGORITHM, JWT_SECRET
+from web.permissions import get_or_compute_channels
 
 router = APIRouter(prefix="/mcp")
 security = HTTPBearer()
 
 # 연결별 상태 — tool 핸들러는 mcp.run() 컨텍스트 안에서 실행되므로 contextvar 사용
-_channels_ctx: ContextVar[list[dict]] = ContextVar("mcp_channels")
+_user_id_ctx: ContextVar[str] = ContextVar("mcp_user_id")
 _pool_ctx: ContextVar[asyncpg.Pool] = ContextVar("mcp_pool")
 
 mcp = Server("discord-logbot")
@@ -52,11 +54,9 @@ def _validate_token(credentials: HTTPAuthorizationCredentials) -> dict:
     return payload
 
 
-def _extract_channels(credentials: HTTPAuthorizationCredentials) -> list[dict]:
-    return _validate_token(credentials).get("channels", [])
-
-
-def _check_access(guild_id: str, channel_id: str | None = None) -> str | None:
+def _check_access(
+    channels: list[dict], guild_id: str, channel_id: str | None = None
+) -> str | None:
     """접근 불가 시 오류 메시지 반환, 허용 시 None.
 
     - guild_id 체크: 해당 길드에 접근 가능한 채널이 하나 이상 있어야 통과.
@@ -66,7 +66,6 @@ def _check_access(guild_id: str, channel_id: str | None = None) -> str | None:
     - channel_id는 guild_id에 속한 채널인지도 교차 검증
       (guild_id=A, channel_id=B_from_guild_C 조합 차단).
     """
-    channels = _channels_ctx.get()
     # guild_id → 해당 길드에서 접근 가능한 channel_id 집합으로 매핑
     guild_channel_map: dict[str, set[str]] = {}
     for c in channels:
@@ -196,8 +195,12 @@ async def list_tools() -> list[Tool]:
 
 @mcp.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-    channels = _channels_ctx.get()
+    user_id = _user_id_ctx.get()
     pool = _pool_ctx.get()
+
+    # 매 도구 호출마다 캐시 조회 — SSE 세션이 길어도 권한 변경 즉시 반영.
+    # miss/expired 시 Discord API로 lazy fill (TTL 6h).
+    channels = await get_or_compute_channels(pool, user_id)
 
     if name == "list_channels":
         return [TextContent(type="text", text=json.dumps(channels, ensure_ascii=False, indent=2))]
@@ -211,7 +214,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     if name in _CHANNEL_REQUIRED and channel_id is None:
         return [TextContent(type="text", text="channel_id가 필요합니다.")]
 
-    err = _check_access(guild_id, channel_id)
+    err = _check_access(channels, guild_id, channel_id)
     if err:
         return [TextContent(type="text", text=err)]
 
@@ -318,7 +321,6 @@ async def mcp_sse(
     """
     payload = _validate_token(credentials)
     user_id: str = payload["sub"]
-    channels: list[dict] = payload.get("channels", [])
     pool: asyncpg.Pool = request.app.state.pool
 
     captured_sids: list[str] = []
@@ -344,7 +346,7 @@ async def mcp_sse(
                 _sid_found = True
         await original_send(message)
 
-    token_c = _channels_ctx.set(channels)
+    token_u = _user_id_ctx.set(user_id)
     token_p = _pool_ctx.set(pool)
     try:
         async with sse_transport.connect_sse(
@@ -354,7 +356,7 @@ async def mcp_sse(
     finally:
         for sid in captured_sids:
             _session_owners.pop(sid, None)
-        _channels_ctx.reset(token_c)
+        _user_id_ctx.reset(token_u)
         _pool_ctx.reset(token_p)
     return _AlreadySentResponse()
 
