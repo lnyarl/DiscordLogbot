@@ -3,13 +3,17 @@
 
 현재 메시지를 반드시 전부 포함하고, 남은 토큰 예산으로 같은 채널의
 전후 메시지를 가까운 순서부터 채워 넣는다.
+임베딩은 로컬 Ollama 서버에 위임한다.
 
 실행:
     python -m workers.embedding_worker
 
 환경변수:
     DATABASE_URL    PostgreSQL 연결 문자열
+    OLLAMA_HOST     Ollama 서버 주소 (기본 http://localhost:11434)
+    OLLAMA_MODEL    사용할 임베딩 모델 (기본 bge-m3)
     BATCH_SIZE      한 번에 처리할 메시지 수 (기본 32)
+    CONCURRENCY     동시 Ollama 요청 수 (기본 4)
     POLL_INTERVAL   큐 비었을 때 재확인 간격(초) (기본 10)
     MAX_TOKENS      임베딩 입력 최대 토큰 수 (기본 8000)
     CONTEXT_BEFORE  이전 메시지 최대 수 (기본 10)
@@ -24,10 +28,9 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import asyncpg
-import numpy as np
 from dotenv import load_dotenv
+from ollama import AsyncClient
 from pgvector.asyncpg import register_vector
-from sentence_transformers import SentenceTransformer
 
 load_dotenv()
 
@@ -39,13 +42,24 @@ logging.basicConfig(
 log = logging.getLogger("embedding_worker")
 
 DATABASE_URL = os.environ["DATABASE_URL"]
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "bge-m3")
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "32"))
+CONCURRENCY = int(os.getenv("CONCURRENCY", "4"))
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "10"))
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "8000"))
 CONTEXT_BEFORE = int(os.getenv("CONTEXT_BEFORE", "10"))
 CONTEXT_AFTER = int(os.getenv("CONTEXT_AFTER", "5"))
 MAX_GAP = timedelta(hours=float(os.getenv("MAX_GAP_HOURS", "2")))
-MODEL_NAME = "BAAI/bge-m3"
+
+
+def estimate_tokens(text: str) -> int:
+    """한글/영문 혼용 텍스트의 토큰 수를 근사한다.
+    한글 1자 ≈ 2토큰, ASCII 1자 ≈ 0.3토큰 기준으로 보수적으로 추정.
+    """
+    korean = sum(1 for c in text if "가" <= c <= "힣")
+    other = len(text) - korean
+    return int(korean * 2 + other * 0.4) + 1
 
 
 def parse_dt(value: str) -> datetime:
@@ -58,40 +72,20 @@ def parse_dt(value: str) -> datetime:
 def trim_by_gap(
     messages: list[asyncpg.Record],
     anchor_dt: datetime,
-    ascending: bool,
 ) -> list[asyncpg.Record]:
-    """메시지 간 시간 간격이 MAX_GAP 초과하는 지점에서 자른다.
-
-    ascending=True  → after 메시지 (anchor에서 시간 순으로 멀어짐)
-    ascending=False → before 메시지 (anchor에서 시간 역순으로 멀어짐)
-    """
+    """메시지 간 시간 간격이 MAX_GAP 초과하는 지점에서 자른다."""
     result = []
     prev_dt = anchor_dt
     for msg in messages:
         msg_dt = parse_dt(msg["created_at"])
-        gap = abs(msg_dt - prev_dt)
-        if gap > MAX_GAP:
+        if abs(msg_dt - prev_dt) > MAX_GAP:
             break
         result.append(msg)
         prev_dt = msg_dt
     return result
 
 
-def load_model() -> SentenceTransformer:
-    import torch
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
-    log.info("모델 로딩: %s (device=%s)", MODEL_NAME, device)
-    model = SentenceTransformer(MODEL_NAME, device=device)
-    log.info("모델 로딩 완료")
-    return model
-
-
-def count_tokens(model: SentenceTransformer, text: str) -> int:
-    return len(model.tokenizer.encode(text, add_special_tokens=False))
-
-
 def build_context_text(
-    model: SentenceTransformer,
     current: asyncpg.Record,
     before: list[asyncpg.Record],
     after: list[asyncpg.Record],
@@ -105,7 +99,7 @@ def build_context_text(
         return f"{r['author_name']}: {r['content']}"
 
     current_text = fmt(current)
-    current_tokens = count_tokens(model, current_text)
+    current_tokens = estimate_tokens(current_text)
 
     if current_tokens >= MAX_TOKENS:
         return current_text
@@ -118,18 +112,18 @@ def build_context_text(
     while budget > 0 and (bi < len(before) or ai < len(after)):
         if bi < len(before):
             line = fmt(before[bi])
-            tokens = count_tokens(model, line) + 1  # +1 개행
-            if tokens <= budget:
+            cost = estimate_tokens(line) + 1  # +1 개행
+            if cost <= budget:
                 before_parts.append(line)
-                budget -= tokens
+                budget -= cost
             bi += 1
 
         if ai < len(after) and budget > 0:
             line = fmt(after[ai])
-            tokens = count_tokens(model, line) + 1
-            if tokens <= budget:
+            cost = estimate_tokens(line) + 1
+            if cost <= budget:
                 after_parts.append(line)
-                budget -= tokens
+                budget -= cost
             ai += 1
 
     parts = list(reversed(before_parts)) + [current_text] + after_parts
@@ -156,48 +150,50 @@ async def fetch_context(
     channel_id: str,
     created_at: str,
 ) -> tuple[list[asyncpg.Record], list[asyncpg.Record]]:
-    before = await conn.fetch(
-        """
-        SELECT author_name, content, created_at
-        FROM messages
-        WHERE channel_id = $1
-          AND created_at < $2
-          AND action != 'delete'
-          AND length(content) >= 1
-        ORDER BY created_at DESC
-        LIMIT $3
-        """,
-        channel_id, created_at, CONTEXT_BEFORE,
+    before, after = await asyncio.gather(
+        conn.fetch(
+            """
+            SELECT author_name, content, created_at
+            FROM messages
+            WHERE channel_id = $1 AND created_at < $2
+              AND action != 'delete' AND length(content) >= 1
+            ORDER BY created_at DESC LIMIT $3
+            """,
+            channel_id, created_at, CONTEXT_BEFORE,
+        ),
+        conn.fetch(
+            """
+            SELECT author_name, content, created_at
+            FROM messages
+            WHERE channel_id = $1 AND created_at > $2
+              AND action != 'delete' AND length(content) >= 1
+            ORDER BY created_at ASC LIMIT $3
+            """,
+            channel_id, created_at, CONTEXT_AFTER,
+        ),
     )
-    after = await conn.fetch(
-        """
-        SELECT author_name, content, created_at
-        FROM messages
-        WHERE channel_id = $1
-          AND created_at > $2
-          AND action != 'delete'
-          AND length(content) >= 1
-        ORDER BY created_at ASC
-        LIMIT $3
-        """,
-        channel_id, created_at, CONTEXT_AFTER,
-    )
-
     anchor_dt = parse_dt(created_at)
-    trimmed_before = trim_by_gap(list(before), anchor_dt, ascending=False)
-    trimmed_after = trim_by_gap(list(after), anchor_dt, ascending=True)
+    return trim_by_gap(list(before), anchor_dt), trim_by_gap(list(after), anchor_dt)
 
-    return trimmed_before, trimmed_after
+
+async def embed_one(
+    client: AsyncClient,
+    sem: asyncio.Semaphore,
+    text: str,
+) -> list[float]:
+    async with sem:
+        response = await client.embeddings(model=OLLAMA_MODEL, prompt=text)
+        return response.embedding
 
 
 async def save_embeddings(
     conn: asyncpg.Connection,
     rows: list[asyncpg.Record],
-    embeddings: np.ndarray,
+    embeddings: list[list[float]],
 ) -> None:
     await conn.executemany(
         "UPDATE messages SET embedding = $1 WHERE id = $2",
-        [(emb.tolist(), row["id"]) for row, emb in zip(rows, embeddings)],
+        [(emb, row["id"]) for row, emb in zip(rows, embeddings)],
     )
 
 
@@ -209,13 +205,14 @@ async def count_remaining(conn: asyncpg.Connection) -> int:
 
 
 async def run() -> None:
-    model = load_model()
+    client = AsyncClient(host=OLLAMA_HOST)
+    sem = asyncio.Semaphore(CONCURRENCY)
 
     pool = await asyncpg.create_pool(DATABASE_URL)
     async with pool.acquire() as conn:
         await register_vector(conn)
         remaining = await count_remaining(conn)
-    log.info("임베딩 대기 메시지: %d건", remaining)
+    log.info("모델: %s | 대기 메시지: %d건", OLLAMA_MODEL, remaining)
 
     total_processed = 0
 
@@ -230,25 +227,20 @@ async def run() -> None:
                 await asyncio.sleep(POLL_INTERVAL)
                 continue
 
-            # 각 메시지에 대해 전후 컨텍스트를 붙인 입력 텍스트 생성
+            # 컨텍스트 조합
             texts: list[str] = []
             for row in rows:
-                before, after = await fetch_context(
-                    conn, row["channel_id"], row["created_at"]
-                )
-                text = build_context_text(model, row, before, after)
-                texts.append(text)
+                before, after = await fetch_context(conn, row["channel_id"], row["created_at"])
+                texts.append(build_context_text(row, before, after))
 
+            # Ollama 병렬 임베딩
             t0 = time.perf_counter()
-            embeddings = model.encode(
-                texts,
-                batch_size=BATCH_SIZE,
-                show_progress_bar=False,
-                normalize_embeddings=True,
+            embeddings = await asyncio.gather(
+                *[embed_one(client, sem, text) for text in texts]
             )
             elapsed = time.perf_counter() - t0
 
-            await save_embeddings(conn, rows, embeddings)
+            await save_embeddings(conn, rows, list(embeddings))
 
             total_processed += len(rows)
             log.info(
