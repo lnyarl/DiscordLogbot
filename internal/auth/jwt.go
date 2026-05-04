@@ -36,7 +36,8 @@ func UserIDFrom(ctx context.Context) (string, bool) {
 
 // Claims is the minimal subset Phase 2 needs.
 type Claims struct {
-	Type string `json:"type"`
+	Type     string `json:"type"`
+	Username string `json:"username,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -56,8 +57,25 @@ func NewVerifier(secret, expectedType string) *Verifier {
 	return &Verifier{secret: []byte(secret), expectedType: expectedType}
 }
 
+// NewSessionVerifier validates the cookie-session JWTs minted by the web
+// auth flow. Python's web/auth.py emits these without a `type` claim, so
+// the verifier only checks signature, validity, and `sub`.
+func NewSessionVerifier(secret string) *Verifier {
+	return &Verifier{secret: []byte(secret), expectedType: ""}
+}
+
 // Verify parses and validates a token, returning the subject (user id).
 func (v *Verifier) Verify(token string) (string, error) {
+	c, err := v.VerifyClaims(token)
+	if err != nil {
+		return "", err
+	}
+	return c.Subject, nil
+}
+
+// VerifyClaims is like Verify but returns the full validated claims so
+// callers (e.g. the cookie session flow) can read username alongside sub.
+func (v *Verifier) VerifyClaims(token string) (*Claims, error) {
 	var c Claims
 	parsed, err := jwt.ParseWithClaims(token, &c, func(t *jwt.Token) (any, error) {
 		if t.Method != jwt.SigningMethodHS256 {
@@ -66,16 +84,18 @@ func (v *Verifier) Verify(token string) (string, error) {
 		return v.secret, nil
 	})
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrInvalidToken, err)
+		return nil, fmt.Errorf("%w: %v", ErrInvalidToken, err)
 	}
 	if !parsed.Valid {
-		return "", ErrInvalidToken
+		return nil, ErrInvalidToken
 	}
-	if c.Type != v.expectedType {
-		return "", fmt.Errorf("%w: got %q want %q", ErrInvalidType, c.Type, v.expectedType)
+	// expectedType "" means "any/no type required" — used for cookie session
+	// tokens that don't carry a `type` claim.
+	if v.expectedType != "" && c.Type != v.expectedType {
+		return nil, fmt.Errorf("%w: got %q want %q", ErrInvalidType, c.Type, v.expectedType)
 	}
 	if c.Subject == "" {
-		return "", ErrMissingSub
+		return nil, ErrMissingSub
 	}
-	return c.Subject, nil
+	return &c, nil
 }

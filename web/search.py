@@ -9,6 +9,7 @@ from fastapi.templating import Jinja2Templates
 from web.main import limiter
 
 from web.auth import decode_jwt
+from web.permissions import get_or_compute_channels
 
 TEMPLATES = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
 
@@ -52,16 +53,21 @@ async def list_channels(request: Request, session: str | None = Cookie(default=N
     if not payload:
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
-    guild_ids = payload.get("guild_ids", [])
-
-    if not guild_ids:
+    user_id = payload.get("sub", "")
+    if not user_id:
         return {"channels": []}
 
     pool = request.app.state.pool
+    accessible = await get_or_compute_channels(pool, user_id)
+    if not accessible:
+        return {"channels": []}
+    accessible_ids = list({c["channel_id"] for c in accessible})
+
+    # log_channels 와 교집합: 사용자가 VIEW_CHANNEL 권한을 갖고 봇이 로깅 중인 채널
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT guild_id, channel_id, guild_name, channel_name FROM log_channels WHERE guild_id = ANY($1::text[])",
-            guild_ids,
+            "SELECT guild_id, channel_id, guild_name, channel_name FROM log_channels WHERE channel_id = ANY($1::text[])",
+            accessible_ids,
         )
 
     channels = []
@@ -162,16 +168,21 @@ async def search(
     if not payload:
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
-    guild_ids = payload.get("guild_ids", [])
-
-    if not guild_ids:
+    user_id = payload.get("sub", "")
+    if not user_id:
         return {"results": [], "total": 0, "page": page, "pages": 0}
 
     pool = request.app.state.pool
+    accessible = await get_or_compute_channels(pool, user_id)
+    if not accessible:
+        return {"results": [], "total": 0, "page": page, "pages": 0}
+    accessible_view_ids = list({c["channel_id"] for c in accessible})
+
+    # 사용자가 VIEW 권한을 가진 채널 중에서 봇이 로깅 중인 채널만 search 대상.
     async with pool.acquire() as conn:
         log_rows = await conn.fetch(
-            "SELECT guild_id, channel_id FROM log_channels WHERE guild_id = ANY($1::text[])",
-            guild_ids,
+            "SELECT guild_id, channel_id FROM log_channels WHERE channel_id = ANY($1::text[])",
+            accessible_view_ids,
         )
     accessible_ids = {row["channel_id"] for row in log_rows}
     guild_map = {row["channel_id"]: row["guild_id"] for row in log_rows}

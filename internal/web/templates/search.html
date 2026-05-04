@@ -1,0 +1,289 @@
+
+{{define "title"}}검색 — Discord 사관{{end}}
+{{define "content"}}
+<div class="search-wrap">
+  <div class="search-bar">
+    <input id="query" type="text" placeholder="검색어를 입력하세요..." autocomplete="off">
+    <button id="btn-search" class="btn">검색</button>
+  </div>
+
+  <div class="filters">
+    <select id="filter-guild">
+      <option value="">모든 서버</option>
+    </select>
+    <select id="filter-channel">
+      <option value="">모든 채널</option>
+    </select>
+    <input id="filter-author" type="text" placeholder="유저명" autocomplete="off">
+    <label class="toggle-events"><input type="checkbox" id="show-events"> 이벤트 포함</label>
+  </div>
+
+  <div id="results-info" class="results-info"></div>
+  <div id="results" class="results"></div>
+  <div id="pagination" class="pagination"></div>
+</div>
+
+<script>
+let allChannels = [];
+let currentPage = 1;
+
+function pushState() {
+  const params = new URLSearchParams();
+  const guildId = document.getElementById('filter-guild').value;
+  const channelId = document.getElementById('filter-channel').value;
+  const q = document.getElementById('query').value.trim();
+  const showEvents = document.getElementById('show-events').checked;
+  const author = document.getElementById('filter-author').value.trim();
+  if (guildId) params.set('guild', guildId);
+  if (channelId) params.set('channel', channelId);
+  if (q) params.set('q', q);
+  if (author) params.set('author', author);
+  if (currentPage > 1) params.set('page', currentPage);
+  if (showEvents) params.set('events', '1');
+  const qs = params.toString();
+  history.replaceState(null, '', '/search' + (qs ? '?' + qs : ''));
+}
+
+function getUrlParams() {
+  return new URLSearchParams(location.search);
+}
+
+async function loadChannels() {
+  const res = await fetch('/api/channels');
+  const data = await res.json();
+  allChannels = data.channels || [];
+
+  const guilds = [...new Map(allChannels.map(c => [c.guild_id, c.guild_name])).entries()];
+  const guildSel = document.getElementById('filter-guild');
+  guilds.forEach(([id, name]) => {
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = name;
+    guildSel.appendChild(opt);
+  });
+
+  guildSel.addEventListener('change', () => { updateChannelFilter(); pushState(); onFilterChange(); });
+  document.getElementById('filter-channel').addEventListener('change', () => { pushState(); onFilterChange(); });
+
+  // URL에서 상태 복원
+  const params = getUrlParams();
+  const savedGuild = params.get('guild');
+  const savedChannel = params.get('channel');
+  const savedQ = params.get('q');
+  const savedPage = parseInt(params.get('page')) || 1;
+
+  if (savedGuild) {
+    guildSel.value = savedGuild;
+    updateChannelFilter();
+  }
+  if (savedChannel) {
+    document.getElementById('filter-channel').value = savedChannel;
+  }
+  if (params.get('author')) {
+    document.getElementById('filter-author').value = params.get('author');
+  }
+  if (params.get('events') === '1') {
+    document.getElementById('show-events').checked = true;
+  }
+  if (savedQ) {
+    document.getElementById('query').value = savedQ;
+    doSearch(savedPage);
+  } else if (savedChannel) {
+    loadRecent(savedChannel, savedPage);
+  }
+}
+
+function updateChannelFilter() {
+  const guildId = document.getElementById('filter-guild').value;
+  const chSel = document.getElementById('filter-channel');
+  chSel.innerHTML = '<option value="">모든 채널</option>';
+  const filtered = guildId ? allChannels.filter(c => c.guild_id === guildId) : allChannels;
+  filtered.forEach(c => {
+    const opt = document.createElement('option');
+    opt.value = c.channel_id;
+    opt.textContent = '#' + c.channel_name;
+    chSel.appendChild(opt);
+  });
+}
+
+async function onFilterChange() {
+  const channelId = document.getElementById('filter-channel').value;
+  const q = document.getElementById('query').value.trim();
+  if (q) {
+    doSearch(1);
+  } else if (channelId) {
+    loadRecent(channelId);
+  } else {
+    doSearch(1);
+  }
+}
+
+async function loadRecent(channelId, page = 1) {
+  currentPage = page;
+  window._recentChannelId = channelId;
+  pushState();
+  const params = new URLSearchParams({ q: '', channel_id: channelId, page });
+  const authorR = document.getElementById('filter-author').value.trim();
+  if (authorR) params.set('author', authorR);
+  if (document.getElementById('show-events').checked) params.set('include_events', '1');
+  const res = await fetch('/api/search?' + params);
+  if (res.status === 401) { location.href = '/'; return; }
+  if (res.status === 403) { showError('접근 권한이 없는 채널입니다.'); return; }
+  const data = await res.json();
+  renderResults(data, null);
+}
+
+async function doSearch(page = 1) {
+  const q = document.getElementById('query').value.trim();
+
+  currentPage = page;
+  pushState();
+  const guildId = document.getElementById('filter-guild').value;
+  const channelId = document.getElementById('filter-channel').value;
+
+  const params = new URLSearchParams({ q, page });
+  if (channelId) params.set('channel_id', channelId);
+  else if (guildId) params.set('guild_id', guildId);
+  const authorS = document.getElementById('filter-author').value.trim();
+  if (authorS) params.set('author', authorS);
+  if (document.getElementById('show-events').checked) params.set('include_events', '1');
+
+  const res = await fetch('/api/search?' + params);
+  if (res.status === 401) { location.href = '/'; return; }
+  if (res.status === 403) { showError('접근 권한이 없는 채널입니다.'); return; }
+
+  const data = await res.json();
+  renderResults(data, q);
+}
+
+function renderResults(data, q) {
+  const info = document.getElementById('results-info');
+  const container = document.getElementById('results');
+  const pagination = document.getElementById('pagination');
+
+  info.textContent = data.total > 0
+    ? `총 ${data.total.toLocaleString()}개 결과`
+    : '결과가 없습니다.';
+
+  container.innerHTML = '';
+  data.results.forEach(r => {
+    const el = document.createElement('div');
+    el.className = 'result-item';
+
+    const ACTION_LABELS = {add: '작성', update: '수정됨', delete: '삭제됨'};
+
+    if (r.type === 'event') {
+      const parsed = typeof r.details === 'string' ? (() => { try { return JSON.parse(r.details); } catch { return {}; } })() : (r.details || {});
+      const summary = parsed.content || parsed.new_content || '';
+      el.innerHTML = `
+        <div class="result-meta">
+          <span class="event-type">${escHtml(r.event_label)}</span>
+          ${r.target_name ? `<span class="channel">#${escHtml(r.target_name)}</span>` : ''}
+          ${r.actor_name ? `<span class="author">@${escHtml(r.actor_name)}</span>` : ''}
+          <span class="time">${new Date(r.occurred_at).toLocaleString('ko-KR')}</span>
+        </div>
+        ${summary ? `<div class="result-content event-details">${escHtml(summary)}</div>` : ''}
+      `;
+    } else {
+      const actionLabel = ACTION_LABELS[r.action] || r.action;
+      const safeContent = escHtml(r.content);
+      const withEmojis = renderEmojis(safeContent);
+      const highlighted = q ? withEmojis.replace(
+        new RegExp(escHtml(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'),
+        m => `<mark>${m}</mark>`
+      ) : withEmojis;
+      const linked = linkify(highlighted);
+      const discordLink = `https://discord.com/channels/${r.guild_id}/${r.channel_id}/${r.message_id}`;
+      const attachments = r.attachments || [];
+      const imageExts = ['image/png','image/jpeg','image/gif','image/webp','image/svg+xml'];
+      const images = attachments.filter(a => imageExts.includes(a.content_type));
+      const files = attachments.filter(a => !imageExts.includes(a.content_type));
+      const getUrl = (a) => a.local_path ? '/attachments/' + encodeURI(a.local_path) : a.url;
+      let attachHtml = '';
+      if (images.length) {
+        attachHtml += '<div class="result-images">' + images.map(a =>
+          `<a href="${escHtml(getUrl(a))}" target="_blank" rel="noopener"><img src="${escHtml(getUrl(a))}" alt="${escHtml(a.filename)}" loading="lazy"></a>`
+        ).join('') + '</div>';
+      }
+      if (files.length) {
+        attachHtml += '<div class="result-files">' + files.map(a =>
+          `<a href="${escHtml(getUrl(a))}" target="_blank" rel="noopener" class="file-link">📎 ${escHtml(a.filename)}</a>`
+        ).join('') + '</div>';
+      }
+      el.innerHTML = `
+        <div class="result-meta">
+          ${r.action !== 'add' ? `<span class="msg-action msg-action-${escHtml(r.action)}">${escHtml(actionLabel)}</span>` : ''}
+          <span class="channel">#${escHtml(r.channel_name)}</span>
+          <span class="author">@${escHtml(r.author_name)}</span>
+          <span class="time">${new Date(r.created_at).toLocaleString('ko-KR')}</span>
+          <a href="${discordLink}" target="_blank" rel="noopener" class="discord-link" title="Discord에서 보기">↗</a>
+        </div>
+        <div class="result-content">${linked}</div>
+        ${attachHtml}
+      `;
+    }
+    container.appendChild(el);
+  });
+
+  // 페이지네이션
+  pagination.innerHTML = '';
+  if (data.pages > 1) {
+    for (let i = 1; i <= data.pages; i++) {
+      const btn = document.createElement('button');
+      btn.textContent = i;
+      btn.className = 'btn btn-sm' + (i === currentPage ? ' active' : '');
+      btn.addEventListener('click', () => {
+        const currentQ = document.getElementById('query').value.trim();
+        if (currentQ || !window._recentChannelId) doSearch(i);
+        else loadRecent(window._recentChannelId, i);
+      });
+      pagination.appendChild(btn);
+    }
+  }
+}
+
+function showError(msg) {
+  document.getElementById('results-info').textContent = msg;
+  document.getElementById('results').innerHTML = '';
+  document.getElementById('pagination').innerHTML = '';
+}
+
+function escHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function linkify(html) {
+  // URL 패턴을 클릭 가능한 링크로 변환 (이미 태그 내부에 있는 URL은 건드리지 않음)
+  return html.replace(/(https?:\/\/[^\s<>"']+)/g, (url) => {
+    // 끝에 붙은 구두점 제거
+    let trailing = '';
+    const m = url.match(/([).,;:!?]+)$/);
+    if (m) { trailing = m[1]; url = url.slice(0, -trailing.length); }
+    return `<a href="${url}" target="_blank" rel="noopener">${url}</a>${trailing}`;
+  });
+}
+
+function renderEmojis(html) {
+  // escHtml 이후의 텍스트에서 이모지 패턴 치환
+  // 원본: <a:name:id> or <:name:id>  →  escHtml 후: &lt;a:name:id&gt; or &lt;:name:id&gt;
+  return html.replace(/&lt;(a?):(\w+):(\d+)&gt;/g, (_, anim, name, id) => {
+    const ext = anim ? 'gif' : 'png';
+    return `<img class="inline-emoji" src="/emojis/${id}.${ext}" alt=":${name}:" title=":${name}:">`;
+  });
+}
+
+document.getElementById('btn-search').addEventListener('click', () => doSearch(1));
+document.getElementById('query').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doSearch(1);
+});
+document.getElementById('show-events').addEventListener('change', () => {
+  pushState();
+  const q = document.getElementById('query').value.trim();
+  if (q) doSearch(currentPage);
+  else if (window._recentChannelId) loadRecent(window._recentChannelId, currentPage);
+});
+
+loadChannels();
+</script>
+{{end}}

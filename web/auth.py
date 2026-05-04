@@ -119,19 +119,16 @@ async def callback(
     user_id = user["id"]
     username = user["username"]
 
-    # 접근 가능한 길드 ID만 JWT에 포함 (채널 목록은 DB에서 실시간 조회)
+    # 접근 가능한 채널을 봇 토큰 기반 권한 계산으로 채워 channel_access_cache에
+    # 기록한다. JWT는 더 이상 길드 ID 리스트를 들고 다니지 않음 — 검색·MCP가
+    # 동일한 캐시를 읽어 권한 모델을 일치시킨다.
     try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(
-                f"{DISCORD_API}/users/@me/guilds",
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
-            r.raise_for_status()
-            guild_ids = [g["id"] for g in r.json()]
+        from web.permissions import compute_accessible_channels, write_cache
+        channels = await compute_accessible_channels(user_id)
+        await write_cache(request.app.state.pool, user_id, channels)
     except Exception:
-        import logging
-        logging.exception("길드 목록 수집 실패 (user_id=%s)", user_id)
-        guild_ids = []
+        log.exception("접근 채널 사전 계산 실패 (user_id=%s)", user_id)
+        # 캐시가 비어 있으면 검색 시 lazy fill로 재시도된다.
 
     expire = datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRE_HOURS)
     token = jwt.encode(
@@ -139,7 +136,6 @@ async def callback(
             "sub": user_id,
             "username": username,
             "exp": expire,
-            "guild_ids": guild_ids,
         },
         JWT_SECRET,
         algorithm=JWT_ALGORITHM,
