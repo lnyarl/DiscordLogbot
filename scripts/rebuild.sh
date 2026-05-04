@@ -13,9 +13,8 @@ require_docker
 
 TARGET="${1:-go}"
 
-mapfile -t LINES < <(resolve_target "$TARGET")
-COMPOSE_ARGS="${LINES[0]}"
-SERVICES="${LINES[1]}"
+COMPOSE_ARGS="$(resolve_compose_args "$TARGET")"
+SERVICES="$(resolve_services "$TARGET")"
 
 echo "▶ 이미지 재빌드 (target=$TARGET)"
 docker compose $COMPOSE_ARGS build $SERVICES

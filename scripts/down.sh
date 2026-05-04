@@ -22,9 +22,8 @@ for arg in "$@"; do
   fi
 done
 
-mapfile -t LINES < <(resolve_target "$TARGET")
-COMPOSE_ARGS="${LINES[0]}"
-SERVICES="${LINES[1]}"
+COMPOSE_ARGS="$(resolve_compose_args "$TARGET")"
+SERVICES="$(resolve_services "$TARGET")"
 
 if $REMOVE; then
   echo "▶ 정지 + 컨테이너 삭제 (target=$TARGET)"

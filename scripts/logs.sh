@@ -15,9 +15,8 @@ require_docker
 TARGET="${1:-go}"
 shift || true
 
-mapfile -t LINES < <(resolve_target "$TARGET")
-COMPOSE_ARGS="${LINES[0]}"
-DEFAULT_SERVICES="${LINES[1]}"
+COMPOSE_ARGS="$(resolve_compose_args "$TARGET")"
+DEFAULT_SERVICES="$(resolve_services "$TARGET")"
 
 # 추가 인자가 있으면 그 서비스만 follow.
 if [[ $# -gt 0 ]]; then

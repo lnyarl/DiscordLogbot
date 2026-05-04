@@ -23,9 +23,8 @@ for arg in "$@"; do
   fi
 done
 
-mapfile -t LINES < <(resolve_target "$TARGET")
-COMPOSE_ARGS="${LINES[0]}"
-SERVICES="${LINES[1]}"
+COMPOSE_ARGS="$(resolve_compose_args "$TARGET")"
+SERVICES="$(resolve_services "$TARGET")"
 
 echo "▶ 기동 (target=$TARGET)"
 echo "  서비스: $SERVICES"
