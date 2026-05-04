@@ -343,6 +343,14 @@ func (b *Bot) cmdStatus(ctx context.Context, s *discordgo.Session, i *discordgo.
 // ── helpers ────────────────────────────────────────────────────────────
 
 func (b *Bot) guildName(guildID string) string {
+	// Prefer the Phase-4 shadow (kept fresh by GuildCreate/Update); fall
+	// back to discordgo State for early-startup edge cases where the
+	// shadow hasn't been seeded yet.
+	if b.Guilds != nil {
+		if g := b.Guilds.Get(guildID); g != nil {
+			return g.Name
+		}
+	}
 	if b.Session == nil || b.Session.State == nil {
 		return ""
 	}
