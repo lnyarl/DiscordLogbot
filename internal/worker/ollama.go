@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -118,11 +120,27 @@ func (c *OllamaClient) Embed(ctx context.Context, prompt string) ([]float32, err
 }
 
 // isTransient reports whether err is the kind of network error worth
-// retrying. Treats every net.Error as retryable; that's coarse but matches
-// the "embeddings are idempotent" property — there's no harm to retry,
-// only the chance to recover from a flaky local Ollama process.
+// retrying. Permanent failures like "no such host" or "connection refused"
+// (the dominant case when Ollama is simply not running) get filtered out
+// so we don't burn 3 retries every batch on an obvious wiring problem.
+// Genuine transient errors — read timeouts, broken pipes mid-stream —
+// fall through to true.
 func isTransient(err error) bool {
-	return err != nil
+	if err == nil {
+		return false
+	}
+	// Permanent: bad hostname.
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return false
+	}
+	// Permanent: connection refused (Ollama not listening).
+	msg := err.Error()
+	if strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "no such host") {
+		return false
+	}
+	return true
 }
 
 // isTransientStatus returns true for HTTP statuses likely to clear on

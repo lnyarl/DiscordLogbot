@@ -68,6 +68,20 @@ func TestParseDT_RejectsGarbage(t *testing.T) {
 	}
 }
 
+func TestParseDT_NaiveWithMicroseconds(t *testing.T) {
+	// asyncpg often returns naive (no tz) timestamps with microsecond
+	// precision; the layout "2006-01-02T15:04:05.000000" must catch
+	// these before falling through to the date-only fallback.
+	got, err := ParseDT("2026-04-25T00:00:00.500000")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	want := time.Date(2026, 4, 25, 0, 0, 0, 500_000_000, time.UTC)
+	if !got.Equal(want) {
+		t.Errorf("got=%s want=%s", got, want)
+	}
+}
+
 // ── TrimByGap ────────────────────────────────────────────────────────────
 
 func TestTrimByGap_StopsOnLargeGap(t *testing.T) {

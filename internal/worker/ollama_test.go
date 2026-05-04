@@ -109,6 +109,25 @@ func TestOllamaClient_Embed_EmptyResponseRejected(t *testing.T) {
 	}
 }
 
+func TestOllamaClient_Embed_NoRetryOnConnectionRefused(t *testing.T) {
+	// Point at a port nothing is listening on so Dial returns
+	// "connection refused" — must NOT retry (waste of time when Ollama
+	// is plainly not running).
+	c := NewOllama("http://127.0.0.1:1", "m")
+	c.MaxRetries = 5
+	c.BaseBackoff = time.Millisecond
+	c.HTTPClient = &http.Client{Timeout: 200 * time.Millisecond}
+	t0 := time.Now()
+	if _, err := c.Embed(context.Background(), "x"); err == nil {
+		t.Error("expected error")
+	}
+	// With 5 retries × 200ms timeout the call would take ~1s. Single
+	// attempt should finish well under 500ms.
+	if elapsed := time.Since(t0); elapsed > 500*time.Millisecond {
+		t.Errorf("connection-refused appears to have retried; elapsed=%s", elapsed)
+	}
+}
+
 func TestOllamaClient_Embed_RespectsContextCancel(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "down", http.StatusServiceUnavailable)

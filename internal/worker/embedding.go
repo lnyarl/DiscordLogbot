@@ -114,7 +114,15 @@ func processBatch(
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }() // no-op after Commit
+	// Rollback uses an uncancellable context so a SIGTERM mid-batch can
+	// still clean up the row locks instead of leaving the tx open. Same
+	// reasoning applies to the Commit below — the actual happy-path
+	// commit must NOT inherit the cancelled signal context.
+	defer func() {
+		bg, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_ = tx.Rollback(bg)
+	}()
 
 	rows, err := tx.Query(ctx, `
 		SELECT id, channel_id, author_name, content, created_at
@@ -143,30 +151,25 @@ func processBatch(
 		return 0, tx.Commit(ctx) // commit the (empty) read tx so locks release
 	}
 
-	// Build prompts in parallel within the same tx — context fetches are
-	// reads, safe to interleave.
+	// Build prompts SEQUENTIALLY — pgx.Tx is documented as not
+	// goroutine-safe, so concurrent tx.Query() calls would race the
+	// underlying connection. Python's worker also ran fetch_context in
+	// a sequential `for` loop. Per-row context queries are cheap; the
+	// real parallelism win is in the Ollama call below.
 	prompts := make([]string, len(batch))
-	g, gctx := errgroup.WithContext(ctx)
 	for i := range batch {
-		i := i
-		g.Go(func() error {
-			before, after, err := fetchContext(gctx, tx, batch[i].ChannelID, batch[i].CreatedAt, cfg)
-			if err != nil {
-				return err
-			}
-			prompts[i] = BuildContextText(
-				ContextMessage{
-					AuthorName: batch[i].AuthorName,
-					Content:    batch[i].Content,
-					CreatedAt:  batch[i].CreatedAt,
-				},
-				before, after, cfg.MaxTokens,
-			)
-			return nil
-		})
-	}
-	if err := g.Wait(); err != nil {
-		return 0, fmt.Errorf("fetch_context: %w", err)
+		before, after, err := fetchContext(ctx, tx, batch[i].ChannelID, batch[i].CreatedAt, cfg)
+		if err != nil {
+			return 0, fmt.Errorf("fetch_context: %w", err)
+		}
+		prompts[i] = BuildContextText(
+			ContextMessage{
+				AuthorName: batch[i].AuthorName,
+				Content:    batch[i].Content,
+				CreatedAt:  batch[i].CreatedAt,
+			},
+			before, after, cfg.MaxTokens,
+		)
 	}
 
 	// Call Ollama in parallel up to cfg.Concurrency. The semaphore caps
@@ -195,9 +198,14 @@ func processBatch(
 	elapsed := time.Since(t0)
 
 	// Save inside the same transaction so the FOR UPDATE locks aren't
-	// released until the embedding is committed.
+	// released until the embedding is committed. Use a commit context
+	// that ignores ctx cancellation — once the embeddings are computed,
+	// rolling back on SIGTERM would silently re-queue the batch on the
+	// next worker restart, wasting the Ollama call we already paid for.
+	commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
 	for i, row := range batch {
-		_, err := tx.Exec(ctx,
+		_, err := tx.Exec(commitCtx,
 			"UPDATE messages SET embedding = $1 WHERE id = $2",
 			pgvector.NewVector(embeddings[i]), row.ID,
 		)
@@ -205,7 +213,7 @@ func processBatch(
 			return 0, fmt.Errorf("update id=%d: %w", row.ID, err)
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(commitCtx); err != nil {
 		return 0, err
 	}
 
