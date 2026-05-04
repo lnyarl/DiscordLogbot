@@ -8,30 +8,26 @@
 //
 // PKCE S256 + JWT-encoded auth codes (10 min) + JTI one-time consumption +
 // static client_id whitelist + localhost-auto redirect_uri allowlist.
+//
+// File layout within this package:
+//   - server.go     this file: Server struct, New, Mount, 4 route handlers
+//   - allowlist.go  client_id + redirect_uri policy
+//   - jti.go        one-time JTI store
+//   - tokens.go     state / auth code / access token JWT sign + parse
+//   - pkce.go       VerifyPKCE primitive
+//   - discord.go    Discord OAuth code exchange + /users/@me fetch
 package oauth
 
 import (
-	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/base64"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
-	"regexp"
-	"strconv"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/lnyarl/discordlogbot/internal/cache"
 	"github.com/lnyarl/discordlogbot/internal/permissions"
 )
 
@@ -97,175 +93,6 @@ func parseSet(csv string) map[string]struct{} {
 		}
 	}
 	return out
-}
-
-// ── Allow lists ──────────────────────────────────────────────────────────
-
-func (s *Server) clientIDAllowed(id string) bool {
-	if len(s.AllowedClientIDs) == 0 {
-		return false
-	}
-	_, ok := s.AllowedClientIDs[id]
-	return ok
-}
-
-var localhostRE = regexp.MustCompile(`^https?://(localhost|127\.0\.0\.1)(?::(\d{1,5}))?(/.*)?$`)
-
-func (s *Server) redirectURIAllowed(uri string) bool {
-	if _, ok := s.StaticRedirectURIs[uri]; ok {
-		return true
-	}
-	m := localhostRE.FindStringSubmatch(uri)
-	if m == nil {
-		return false
-	}
-	if m[2] != "" {
-		port, err := strconv.Atoi(m[2])
-		if err != nil || port < 1 || port > 65535 {
-			return false
-		}
-	}
-	return true
-}
-
-// ── JTI store ────────────────────────────────────────────────────────────
-
-type jtiStore struct {
-	mu  sync.Mutex
-	exp map[string]time.Time
-}
-
-func newJTIStore() *jtiStore {
-	return &jtiStore{exp: make(map[string]time.Time)}
-}
-
-// Consume returns false if jti was already used; otherwise marks it used.
-func (s *jtiStore) Consume(jti string, ttl time.Duration) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	now := time.Now()
-	for k, t := range s.exp {
-		if now.After(t) {
-			delete(s.exp, k)
-		}
-	}
-	if _, used := s.exp[jti]; used {
-		return false
-	}
-	s.exp[jti] = now.Add(ttl)
-	return true
-}
-
-// ── Token claims ─────────────────────────────────────────────────────────
-
-type stateClaims struct {
-	RedirectURI string `json:"redirect_uri"`
-	ClientState string `json:"client_state,omitempty"`
-	CC          string `json:"cc"`
-	CID         string `json:"cid"`
-	jwt.RegisteredClaims
-}
-
-type authCodeClaims struct {
-	Type     string `json:"type"`
-	JTI      string `json:"jti"`
-	Username string `json:"username"`
-	CC       string `json:"cc"`
-	CID      string `json:"cid"`
-	jwt.RegisteredClaims
-}
-
-type accessTokenClaims struct {
-	Type     string `json:"type"`
-	Username string `json:"username"`
-	jwt.RegisteredClaims
-}
-
-func (s *Server) signState(c stateClaims) (string, error) {
-	c.ExpiresAt = jwt.NewNumericDate(time.Now().Add(StateTTL))
-	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, c)
-	return tok.SignedString(s.JWTSecret)
-}
-
-func (s *Server) parseState(tok string) (*stateClaims, error) {
-	var c stateClaims
-	parsed, err := jwt.ParseWithClaims(tok, &c, func(t *jwt.Token) (any, error) {
-		if t.Method != jwt.SigningMethodHS256 {
-			return nil, errors.New("unexpected signing method")
-		}
-		return s.JWTSecret, nil
-	})
-	if err != nil || !parsed.Valid {
-		return nil, errors.New("invalid or expired state")
-	}
-	return &c, nil
-}
-
-func (s *Server) signAuthCode(userID, username, cc, cid string) (string, error) {
-	jtiBuf := make([]byte, 16)
-	if _, err := rand.Read(jtiBuf); err != nil {
-		return "", err
-	}
-	c := authCodeClaims{
-		Type:     "mcp_auth_code",
-		JTI:      base64.RawURLEncoding.EncodeToString(jtiBuf),
-		Username: username,
-		CC:       cc,
-		CID:      cid,
-		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   userID,
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(AuthCodeTTL)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-		},
-	}
-	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, c)
-	return tok.SignedString(s.JWTSecret)
-}
-
-func (s *Server) parseAuthCode(tok string) (*authCodeClaims, error) {
-	var c authCodeClaims
-	parsed, err := jwt.ParseWithClaims(tok, &c, func(t *jwt.Token) (any, error) {
-		if t.Method != jwt.SigningMethodHS256 {
-			return nil, errors.New("unexpected signing method")
-		}
-		return s.JWTSecret, nil
-	})
-	if err != nil || !parsed.Valid {
-		return nil, errors.New("invalid or expired auth code")
-	}
-	if c.Type != "mcp_auth_code" {
-		return nil, errors.New("invalid token type")
-	}
-	return &c, nil
-}
-
-// MakeAccessToken mints a 24-hour MCP access token (type=mcp_access).
-// Channel permissions are NOT embedded — every MCP request looks them up
-// in channel_access_cache by sub.
-func (s *Server) MakeAccessToken(userID, username string) (string, error) {
-	c := accessTokenClaims{
-		Type:     "mcp_access",
-		Username: username,
-		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   userID,
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(AccessTokenTTL)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-		},
-	}
-	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, c)
-	return tok.SignedString(s.JWTSecret)
-}
-
-// ── PKCE ─────────────────────────────────────────────────────────────────
-
-// VerifyPKCE checks that base64url(sha256(verifier)) without padding equals
-// the supplied challenge. Uses crypto/subtle.ConstantTimeCompare which
-// handles length differences without branching, so a length mismatch
-// doesn't leak before the byte-by-byte comparison.
-func VerifyPKCE(verifier, challenge string) bool {
-	h := sha256.Sum256([]byte(verifier))
-	computed := base64.RawURLEncoding.EncodeToString(h[:])
-	return subtle.ConstantTimeCompare([]byte(computed), []byte(challenge)) == 1
 }
 
 // ── Routes ───────────────────────────────────────────────────────────────
@@ -357,17 +184,6 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "https://discord.com/oauth2/authorize?"+v.Encode(), http.StatusSeeOther)
 }
 
-// discordTokenResp / discordUserResp are the relevant subsets of Discord's
-// responses.
-type discordTokenResp struct {
-	AccessToken string `json:"access_token"`
-}
-
-type discordUserResp struct {
-	ID       string `json:"id"`
-	Username string `json:"username"`
-}
-
 func (s *Server) handleDiscordCallback(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	code := q.Get("code")
@@ -422,87 +238,6 @@ func (s *Server) handleDiscordCallback(w http.ResponseWriter, r *http.Request) {
 		v.Set("state", state.ClientState)
 	}
 	http.Redirect(w, r, state.RedirectURI+"?"+v.Encode(), http.StatusSeeOther)
-}
-
-func (s *Server) discordExchangeCode(ctx context.Context, code string) (*discordTokenResp, error) {
-	v := url.Values{}
-	v.Set("client_id", s.DiscordClientID)
-	v.Set("client_secret", s.DiscordClientSecret)
-	v.Set("grant_type", "authorization_code")
-	v.Set("code", code)
-	v.Set("redirect_uri", s.discordCallbackURL)
-	req, err := http.NewRequestWithContext(ctx, "POST",
-		"https://discord.com/api/oauth2/token", strings.NewReader(v.Encode()))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := s.HTTPClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token exchange %d", resp.StatusCode)
-	}
-	var t discordTokenResp
-	if err := json.NewDecoder(resp.Body).Decode(&t); err != nil {
-		return nil, err
-	}
-	if t.AccessToken == "" {
-		return nil, errors.New("empty access_token")
-	}
-	return &t, nil
-}
-
-func (s *Server) discordFetchUser(ctx context.Context, accessToken string) (*discordUserResp, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET",
-		"https://discord.com/api/v10/users/@me", nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	resp, err := s.HTTPClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("/users/@me %d", resp.StatusCode)
-	}
-	var u discordUserResp
-	if err := json.NewDecoder(resp.Body).Decode(&u); err != nil {
-		return nil, err
-	}
-	return &u, nil
-}
-
-// populateCache mirrors web/oauth_server.py:discord_callback's
-// permissions.compute → cache write. Failure logs only (next lazy fill
-// retries from MCP search/get_messages).
-func (s *Server) populateCache(ctx context.Context, userID string) {
-	if s.Pool == nil || s.Permissions == nil {
-		return
-	}
-	channels, err := permissions.ComputeAccessibleChannels(ctx, s.Permissions, userID)
-	if err != nil {
-		slog.Error("compute channels", "err", err, "user_id", userID)
-		return
-	}
-	out := make([]cache.Channel, len(channels))
-	for i, c := range channels {
-		out[i] = cache.Channel{
-			ChannelID:    c.ChannelID,
-			ChannelName:  c.ChannelName,
-			CategoryID:   c.CategoryID,
-			CategoryName: c.CategoryName,
-			GuildID:      c.GuildID,
-			GuildName:    c.GuildName,
-		}
-	}
-	if err := cache.Write(ctx, s.Pool, userID, out); err != nil {
-		slog.Error("cache write", "err", err, "user_id", userID)
-	}
 }
 
 // /oauth/token: trade auth code (+ PKCE verifier) for an access token.
