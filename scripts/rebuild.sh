@@ -1,13 +1,17 @@
-#!/usr/bin/env bash
-# 코드 변경 후 이미지 재빌드 + 무중단 재기동.
+#!/bin/sh
+# Rebuild images + recreate containers (no downtime gap larger than the
+# recreate cycle itself).
 #
 # Usage:
 #   scripts/rebuild.sh        # = scripts/rebuild.sh go
-#   scripts/rebuild.sh go     # Go web/worker 만 재빌드+재기동
-#   scripts/rebuild.sh all    # Python+Go 전체 재빌드+재기동
-#   scripts/rebuild.sh py     # Python 만
+#   scripts/rebuild.sh go     # Go web/worker only
+#   scripts/rebuild.sh all    # Python+Go everything
+#   scripts/rebuild.sh py     # Python only
 
-source "$(dirname "$0")/_lib.sh"
+set -eu
+
+cd "$(dirname "$0")/.."
+. ./scripts/_lib.sh
 
 require_docker
 
@@ -16,13 +20,16 @@ TARGET="${1:-go}"
 COMPOSE_ARGS="$(resolve_compose_args "$TARGET")"
 SERVICES="$(resolve_services "$TARGET")"
 
-echo "▶ 이미지 재빌드 (target=$TARGET)"
+echo "▶ rebuild images (target=$TARGET)"
+# shellcheck disable=SC2086
 docker compose $COMPOSE_ARGS build $SERVICES
 
 echo ""
-echo "▶ 재기동 (--force-recreate 로 새 이미지 적용)"
+echo "▶ recreate (--force-recreate)"
+# shellcheck disable=SC2086
 docker compose $COMPOSE_ARGS up -d --force-recreate $SERVICES
 
 echo ""
-echo "✅ 재기동 완료"
+echo "✅ rebuilt"
+# shellcheck disable=SC2086
 docker compose $COMPOSE_ARGS ps $SERVICES

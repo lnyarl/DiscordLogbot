@@ -1,37 +1,42 @@
-#!/usr/bin/env bash
-# 서비스 정지.
+#!/bin/sh
+# Stop services.
 #
 # Usage:
-#   scripts/down.sh         # = scripts/down.sh go    — Go 측만 정지 (기본, 안전)
+#   scripts/down.sh         # = scripts/down.sh go    — stop Go side only (default, safe)
 #   scripts/down.sh go
-#   scripts/down.sh all     # 전체 정지 (Python 운영봇도 내려감 — 주의)
-#   scripts/down.sh py      # Python 측만
-#   scripts/down.sh <T> --rm   # 컨테이너까지 삭제 (이미지/볼륨은 보존)
+#   scripts/down.sh all     # stop everything (Python prod bot too — careful)
+#   scripts/down.sh py      # Python only
+#   scripts/down.sh <T> --rm   # remove containers (images/volumes preserved)
 
-source "$(dirname "$0")/_lib.sh"
+set -eu
+
+cd "$(dirname "$0")/.."
+. ./scripts/_lib.sh
 
 require_docker
 
 TARGET="${1:-go}"
-shift || true
+[ $# -gt 0 ] && shift
 
-REMOVE=false
+REMOVE=0
 for arg in "$@"; do
-  if [[ "$arg" == "--rm" ]]; then
-    REMOVE=true
+  if [ "$arg" = "--rm" ]; then
+    REMOVE=1
   fi
 done
 
 COMPOSE_ARGS="$(resolve_compose_args "$TARGET")"
 SERVICES="$(resolve_services "$TARGET")"
 
-if $REMOVE; then
-  echo "▶ 정지 + 컨테이너 삭제 (target=$TARGET)"
+if [ "$REMOVE" -eq 1 ]; then
+  echo "▶ stop + remove containers (target=$TARGET)"
+  # shellcheck disable=SC2086
   docker compose $COMPOSE_ARGS rm -sf $SERVICES
 else
-  echo "▶ 정지 (target=$TARGET, 컨테이너 보존)"
+  echo "▶ stop (target=$TARGET, containers preserved)"
+  # shellcheck disable=SC2086
   docker compose $COMPOSE_ARGS stop $SERVICES
 fi
 
-echo "✅ 정지 완료"
-[[ "$TARGET" == "go" ]] && echo "  Python 측 서비스는 영향 없음."
+echo "✅ stopped"
+[ "$TARGET" = "go" ] && echo "  Python services unaffected."

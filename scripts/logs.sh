@@ -1,28 +1,31 @@
-#!/usr/bin/env bash
-# 로그 follow.
+#!/bin/sh
+# Follow logs.
 #
 # Usage:
-#   scripts/logs.sh                   # = scripts/logs.sh go    — Go 측 합쳐서 follow
+#   scripts/logs.sh                   # = scripts/logs.sh go    — Go side combined
 #   scripts/logs.sh go
-#   scripts/logs.sh all               # Python+Go 전체
-#   scripts/logs.sh py                # Python 측만
-#   scripts/logs.sh go web-go         # 한 서비스만
+#   scripts/logs.sh all               # Python+Go everything
+#   scripts/logs.sh py                # Python only
+#   scripts/logs.sh go web-go         # one service
 
-source "$(dirname "$0")/_lib.sh"
+set -eu
+
+cd "$(dirname "$0")/.."
+. ./scripts/_lib.sh
 
 require_docker
 
 TARGET="${1:-go}"
-shift || true
+[ $# -gt 0 ] && shift
 
 COMPOSE_ARGS="$(resolve_compose_args "$TARGET")"
 DEFAULT_SERVICES="$(resolve_services "$TARGET")"
 
-# 추가 인자가 있으면 그 서비스만 follow.
-if [[ $# -gt 0 ]]; then
+if [ $# -gt 0 ]; then
   SERVICES="$*"
 else
   SERVICES="$DEFAULT_SERVICES"
 fi
 
+# shellcheck disable=SC2086
 docker compose $COMPOSE_ARGS logs -f --tail=200 $SERVICES

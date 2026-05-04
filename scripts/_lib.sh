@@ -1,19 +1,26 @@
-#!/usr/bin/env bash
-# 공통 헬퍼 — scripts/*.sh 가 source 한다.
+#!/bin/sh
+# Common helpers for scripts/*.sh — POSIX sh compatible (dash, ash,
+# bash sh-mode, zsh sh-mode, busybox sh).
+#
+# This file is meant to be sourced via `. scripts/_lib.sh` from the
+# repo root. It does not cd by itself — each entry script handles
+# the chdir to repo root, because `$BASH_SOURCE` is bashism and
+# POSIX sh has no portable way to find the sourced file's path.
 
-set -euo pipefail
+set -eu
 
-# 항상 repo 루트에서 docker compose 실행 (어디서 호출하든 동일하게 동작).
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
-
-# Compose 인자 빌더 — bash 3.2 호환을 위해 두 함수로 분리.
-#   target=go     → docker-compose.yml + docker-compose.go.yml, 대상 = web-go worker-go
-#   target=all    → 두 compose 파일 + 대상 = bot web worker web-go worker-go
-#   target=py     → docker-compose.yml 만, 대상 = bot web worker
+require_docker() {
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "❌ docker not found in PATH" >&2
+    exit 1
+  fi
+}
 
 # resolve_compose_args echoes the `-f ...` flags only.
+#   target=go|all  → both compose files
+#   target=py      → base only
 resolve_compose_args() {
-  local target="${1:-go}"
+  target="${1:-go}"
   case "$target" in
     go|all)
       echo "-f docker-compose.yml -f docker-compose.go.yml"
@@ -28,29 +35,16 @@ resolve_compose_args() {
   esac
 }
 
-# resolve_services echoes the space-separated service list.
+# resolve_services echoes the space-separated service list for the target.
 resolve_services() {
-  local target="${1:-go}"
+  target="${1:-go}"
   case "$target" in
-    go)
-      echo "web-go worker-go"
-      ;;
-    all)
-      echo "bot web worker web-go worker-go"
-      ;;
-    py|python)
-      echo "bot web worker"
-      ;;
+    go)  echo "web-go worker-go" ;;
+    all) echo "bot web worker web-go worker-go" ;;
+    py|python) echo "bot web worker" ;;
     *)
       echo "❌ unknown target: $target (expected: go | all | py)" >&2
       exit 2
       ;;
   esac
-}
-
-require_docker() {
-  if ! command -v docker >/dev/null; then
-    echo "❌ docker not found in PATH" >&2
-    exit 1
-  fi
 }

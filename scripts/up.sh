@@ -1,24 +1,27 @@
-#!/usr/bin/env bash
-# 서비스 기동.
+#!/bin/sh
+# Bring services up.
 #
 # Usage:
-#   scripts/up.sh           # = scripts/up.sh go        — Go web/worker만 (기본)
-#   scripts/up.sh go        # Go web (:8090) + Go worker, Python 무영향
-#   scripts/up.sh all       # Python 봇/웹/워커 + Go web/worker (전체)
-#   scripts/up.sh py        # Python만
-#   scripts/up.sh go --build       # 강제 재빌드 후 기동
-#   scripts/up.sh all --build      # 전체 재빌드
+#   scripts/up.sh           # = scripts/up.sh go        — Go web/worker only (default)
+#   scripts/up.sh go        # Go web (:8090) + Go worker, Python untouched
+#   scripts/up.sh all       # Python bot/web/worker + Go web/worker (everything)
+#   scripts/up.sh py        # Python only
+#   scripts/up.sh go --build       # force rebuild before starting
+#   scripts/up.sh all --build      # rebuild everything
 
-source "$(dirname "$0")/_lib.sh"
+set -eu
+
+cd "$(dirname "$0")/.."
+. ./scripts/_lib.sh
 
 require_docker
 
 TARGET="${1:-go}"
-shift || true   # 첫 인자 소비 (없어도 OK)
+[ $# -gt 0 ] && shift
 
 BUILD_FLAG=""
 for arg in "$@"; do
-  if [[ "$arg" == "--build" ]]; then
+  if [ "$arg" = "--build" ]; then
     BUILD_FLAG="--build"
   fi
 done
@@ -26,18 +29,19 @@ done
 COMPOSE_ARGS="$(resolve_compose_args "$TARGET")"
 SERVICES="$(resolve_services "$TARGET")"
 
-echo "▶ 기동 (target=$TARGET)"
-echo "  서비스: $SERVICES"
-[[ -n "$BUILD_FLAG" ]] && echo "  --build (강제 재빌드)"
+echo "▶ starting (target=$TARGET)"
+echo "  services: $SERVICES"
+[ -n "$BUILD_FLAG" ] && echo "  --build (force rebuild)"
 
+# shellcheck disable=SC2086
 docker compose $COMPOSE_ARGS up -d $BUILD_FLAG $SERVICES
 
 echo ""
-echo "✅ 기동 완료"
+echo "✅ up"
 case "$TARGET" in
   go)
-    echo "  Go web:    http://localhost:8090   (Python web 은 :8080 그대로)"
-    echo "  Go worker: 헬스 :8083"
+    echo "  Go web:    http://localhost:8090   (Python web on :8080 untouched)"
+    echo "  Go worker: health :8083"
     ;;
   all)
     echo "  Python web: http://localhost:8080"
@@ -45,6 +49,6 @@ case "$TARGET" in
     ;;
 esac
 echo ""
-echo "  로그:    scripts/logs.sh $TARGET"
-echo "  상태:    scripts/status.sh"
-echo "  정지:    scripts/down.sh $TARGET"
+echo "  logs:    scripts/logs.sh $TARGET"
+echo "  status:  scripts/status.sh"
+echo "  down:    scripts/down.sh $TARGET"
