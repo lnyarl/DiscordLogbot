@@ -4,7 +4,28 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/lnyarl/discordlogbot/internal/cache"
 )
+
+func TestDedupChannelIDs(t *testing.T) {
+	in := []cache.Channel{
+		{ChannelID: "c1"}, {ChannelID: "c2"}, {ChannelID: "c1"}, {ChannelID: "c3"},
+	}
+	out := dedupChannelIDs(in)
+	if len(out) != 3 {
+		t.Fatalf("len=%d want 3", len(out))
+	}
+	want := map[string]bool{"c1": true, "c2": true, "c3": true}
+	for _, id := range out {
+		if !want[id] {
+			t.Errorf("unexpected id %q", id)
+		}
+	}
+	if dedup := dedupChannelIDs(nil); len(dedup) != 0 {
+		t.Errorf("nil input should produce empty slice, got %v", dedup)
+	}
+}
 
 // LikeEscape: characters Postgres treats as ILIKE wildcards must be
 // backslash-escaped before being concatenated into a `%pattern%`. Mirrors
@@ -176,17 +197,6 @@ func TestStripPath(t *testing.T) {
 		if got := stripPath(in); got != want {
 			t.Errorf("stripPath(%q) = %q, want %q", in, got, want)
 		}
-	}
-}
-
-// Also validate IndexOf used to find param positions in the search
-// builder (sentinel for trgm score placeholder).
-func TestIndexOf(t *testing.T) {
-	if got := indexOf([]any{"a", 7, "b"}, "b"); got != 2 {
-		t.Errorf("got=%d", got)
-	}
-	if got := indexOf([]any{"a"}, "x"); got != -1 {
-		t.Errorf("missing should be -1, got %d", got)
 	}
 }
 

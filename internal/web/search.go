@@ -138,10 +138,7 @@ func (h *SearchHandler) ChannelsAPI() http.Handler {
 			writeJSON(w, http.StatusOK, map[string]any{"channels": []channelOut{}})
 			return
 		}
-		ids := make([]string, 0, len(accessible))
-		for _, c := range accessible {
-			ids = append(ids, c.ChannelID)
-		}
+		ids := dedupChannelIDs(accessible)
 		rows, err := h.Pool.Query(ctx, `
 			SELECT guild_id, channel_id, guild_name, channel_name
 			  FROM log_channels
@@ -274,10 +271,7 @@ func (h *SearchHandler) SearchAPI() http.Handler {
 			writeJSON(w, http.StatusOK, empty)
 			return
 		}
-		viewIDs := make([]string, 0, len(accessible))
-		for _, c := range accessible {
-			viewIDs = append(viewIDs, c.ChannelID)
-		}
+		viewIDs := dedupChannelIDs(accessible)
 
 		// Intersect with log_channels — only logged channels appear in messages.
 		logRows, err := h.Pool.Query(ctx,
@@ -506,17 +500,21 @@ func (h *SearchHandler) searchWithQuery(
 	escaped := likeEscape(q)
 	likeQ := "%" + escaped + "%"
 
+	// Param order is fixed: $1=targetIDs, $2=q (or likeQ), [$3=author], $N+1=PageSize, $N+2=offset.
+	// Hard-coding $2 in the trgm score expression is safer than a runtime
+	// position scan — the function would silently break if param order ever
+	// shifted with no test catching it.
 	conditions := []string{"channel_id = ANY($1::text[])"}
 	params := []any{targetIDs}
 
 	var matchSQL string
 	if useTrgm {
 		params = append(params, q)
-		conditions = append(conditions, fmt.Sprintf("content %% $%d", len(params)))
-		matchSQL = fmt.Sprintf("similarity(content, $%d) AS score", indexOf(params, q)+1)
+		conditions = append(conditions, "content % $2")
+		matchSQL = "similarity(content, $2) AS score"
 	} else {
 		params = append(params, likeQ)
-		conditions = append(conditions, fmt.Sprintf("content ILIKE $%d ESCAPE '\\'", len(params)))
+		conditions = append(conditions, "content ILIKE $2 ESCAPE '\\'")
 		matchSQL = "1.0::float AS score"
 	}
 
@@ -619,6 +617,23 @@ func (h *SearchHandler) searchWithQuery(
 //
 // so user-supplied `_` and `%` don't act as ILIKE wildcards. We pair this
 // with `ESCAPE '\'` at the call site.
+// dedupChannelIDs returns the unique channel IDs from accessible. Python's
+// search.py uses `{c["channel_id"] for c in accessible}` (a set) — duplicates
+// in `ANY($1::text[])` are functionally harmless for Postgres but the dedup
+// matches Python's wire and keeps query plans tighter.
+func dedupChannelIDs(accessible []cache.Channel) []string {
+	seen := make(map[string]struct{}, len(accessible))
+	out := make([]string, 0, len(accessible))
+	for _, c := range accessible {
+		if _, in := seen[c.ChannelID]; in {
+			continue
+		}
+		seen[c.ChannelID] = struct{}{}
+		out = append(out, c.ChannelID)
+	}
+	return out
+}
+
 func likeEscape(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, "%", `\%`)
@@ -635,17 +650,6 @@ func parsePositiveInt(s string, def int) int {
 		return def
 	}
 	return n
-}
-
-// indexOf returns the first index in params equal to v (used to find
-// the placeholder number assigned to a value). Returns -1 if not found.
-func indexOf(params []any, v any) int {
-	for i, p := range params {
-		if p == v {
-			return i
-		}
-	}
-	return -1
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -676,9 +680,16 @@ func parseAttachments(raw string) []map[string]any {
 	return out
 }
 
-// parseDetails returns the JSON details payload as a generic value. Unlike
-// attachments it can be either an object or a string fallback (Python's
-// search.py emits it raw and the JS-side parses).
+// parseDetails returns the JSON details payload as a generic value.
+//
+// NOTE on Python parity: search.py emits the raw DB string for `details`
+// (the JS frontend does its own try/JSON.parse). Go pre-parses to a map/
+// list so consumers don't have to. The JS frontend handles both via a
+// runtime `typeof === 'string'` branch, so the UI is unaffected. During
+// a partial cutover, clients alternating between Python and Go responses
+// would see a different wire type — acceptable for the single-backend
+// deployment model. Returns the raw string when JSON parsing fails so
+// pathological details rows don't crash the response.
 func parseDetails(raw string) any {
 	if raw == "" {
 		return nil

@@ -15,11 +15,11 @@ type StaticDirs struct {
 	Emojis      string // /emojis/* (bot-downloaded custom emojis)
 }
 
-// CheckExists mirrors web/main.py's startup guard: every directory must
-// exist before the server starts (otherwise the bot container probably
-// hasn't booted yet and links would 404 silently).
+// CheckExists mirrors web/main.py's startup guard: every configured
+// directory must exist before the server starts (otherwise the bot
+// container probably hasn't booted yet and links would 404 silently).
 func (d StaticDirs) CheckExists() error {
-	for _, dir := range []string{d.Attachments, d.Emojis} {
+	for _, dir := range []string{d.Static, d.Attachments, d.Emojis} {
 		if dir == "" {
 			continue
 		}
