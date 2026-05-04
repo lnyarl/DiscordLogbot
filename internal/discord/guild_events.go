@@ -301,7 +301,7 @@ func (b *Bot) onChannelCreate(_ *discordgo.Session, e *discordgo.ChannelCreate) 
 		GuildID:    e.GuildID,
 		TargetID:   e.ID,
 		TargetName: e.Name,
-		Details:    map[string]any{"channel_type": strconv.Itoa(int(e.Type))},
+		Details:    map[string]any{"channel_type": channelTypeStr(e.Type)},
 		OccurredAt: time.Now(),
 	}); err != nil {
 		slog.Error("save channel_create", "err", err, "channel_id", e.ID)
@@ -318,7 +318,7 @@ func (b *Bot) onChannelDelete(_ *discordgo.Session, e *discordgo.ChannelDelete) 
 		GuildID:    e.GuildID,
 		TargetID:   e.ID,
 		TargetName: e.Name,
-		Details:    map[string]any{"channel_type": strconv.Itoa(int(e.Type))},
+		Details:    map[string]any{"channel_type": channelTypeStr(e.Type)},
 		OccurredAt: time.Now(),
 	}); err != nil {
 		slog.Error("save channel_delete", "err", err, "channel_id", e.ID)
@@ -408,20 +408,20 @@ func diffGuild(before, after *discordgo.Guild) map[string]any {
 	}
 	if before.VerificationLevel != after.VerificationLevel {
 		changes["verification_level"] = map[string]any{
-			"before": strconv.Itoa(int(before.VerificationLevel)),
-			"after":  strconv.Itoa(int(after.VerificationLevel)),
+			"before": verificationLevelStr(before.VerificationLevel),
+			"after":  verificationLevelStr(after.VerificationLevel),
 		}
 	}
 	if before.ExplicitContentFilter != after.ExplicitContentFilter {
 		changes["explicit_content_filter"] = map[string]any{
-			"before": strconv.Itoa(int(before.ExplicitContentFilter)),
-			"after":  strconv.Itoa(int(after.ExplicitContentFilter)),
+			"before": contentFilterStr(before.ExplicitContentFilter),
+			"after":  contentFilterStr(after.ExplicitContentFilter),
 		}
 	}
 	if before.DefaultMessageNotifications != after.DefaultMessageNotifications {
 		changes["default_notifications"] = map[string]any{
-			"before": strconv.Itoa(int(before.DefaultMessageNotifications)),
-			"after":  strconv.Itoa(int(after.DefaultMessageNotifications)),
+			"before": notificationLevelStr(before.DefaultMessageNotifications),
+			"after":  notificationLevelStr(after.DefaultMessageNotifications),
 		}
 	}
 	return changes
@@ -826,7 +826,7 @@ func (b *Bot) onThreadCreate(_ *discordgo.Session, e *discordgo.ThreadCreate) {
 		TargetName: e.Name,
 		Details: map[string]any{
 			"parent_id": e.ParentID,
-			"type":      strconv.Itoa(int(e.Type)),
+			"type":      channelTypeStr(e.Type),
 		},
 		OccurredAt: time.Now(),
 	}); err != nil {
@@ -972,6 +972,19 @@ func (b *Bot) onThreadMembersUpdate(_ *discordgo.Session, e *discordgo.ThreadMem
 }
 
 // ── Reactions ────────────────────────────────────────────────────────────
+//
+// discordgo dispatches MESSAGE_REACTION_ADD/REMOVE once per gateway event,
+// regardless of whether the parent message is cached. Python's discord.py
+// fired both `on_reaction_add` (cached path, message known) and
+// `on_raw_reaction_add` (always), and the Python cog deduped via
+// `if payload.cached_message is not None: return`. The Go side replaces
+// both with this single handler — net effect is identical (one row per
+// gateway dispatch), so no raw fallback is needed.
+//
+// Detail-shape divergence from Python: the cached `on_reaction_add` path
+// historically omitted `user_id` from details (the actor was inferred
+// from the Member object). Our Go handler always includes `user_id`,
+// matching the raw path's shape. Strictly more information.
 
 func (b *Bot) onMessageReactionAdd(_ *discordgo.Session, e *discordgo.MessageReactionAdd) {
 	if e.GuildID == "" {

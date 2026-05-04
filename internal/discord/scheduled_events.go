@@ -3,7 +3,6 @@ package discord
 import (
 	"context"
 	"log/slog"
-	"strconv"
 	"sync"
 	"time"
 
@@ -113,7 +112,7 @@ func (b *Bot) onScheduledEventCreate(_ *discordgo.Session, e *discordgo.GuildSch
 		"start_time":  isoformatPy(e.ScheduledStartTime),
 		"end_time":    isoformatPyPtr(e.ScheduledEndTime),
 		"location":    b.scheduledEventLocation(e.GuildScheduledEvent),
-		"entity_type": strconv.Itoa(int(e.EntityType)),
+		"entity_type": entityTypeStr(e.EntityType),
 	}
 	if err := db.SaveGuildEvent(context.Background(), b.Pool, db.GuildEventInput{
 		EventType:  "scheduled_event_create",
@@ -153,8 +152,8 @@ func diffScheduledEvent(before, after *discordgo.GuildScheduledEvent, locFn func
 	}
 	if before.Status != after.Status {
 		changes["status"] = map[string]any{
-			"before": strconv.Itoa(int(before.Status)),
-			"after":  strconv.Itoa(int(after.Status)),
+			"before": eventStatusStr(before.Status),
+			"after":  eventStatusStr(after.Status),
 		}
 	}
 	bLoc := locFn(before)
@@ -164,8 +163,8 @@ func diffScheduledEvent(before, after *discordgo.GuildScheduledEvent, locFn func
 	}
 	if before.EntityType != after.EntityType {
 		changes["entity_type"] = map[string]any{
-			"before": strconv.Itoa(int(before.EntityType)),
-			"after":  strconv.Itoa(int(after.EntityType)),
+			"before": entityTypeStr(before.EntityType),
+			"after":  entityTypeStr(after.EntityType),
 		}
 	}
 	return changes
@@ -278,15 +277,18 @@ func (b *Bot) scheduledEventName(id string) string {
 }
 
 // userTagFromState resolves a user ID to "Name#1234" via discordgo State.
-// Returns "" if the user isn't cached (the row stores the ID alone in that
-// case — matches discord.py when a user falls out of cache).
+// State has no top-level User-by-ID map, so we scan our guilds until a
+// Member matches — the same fallback discord.py uses when only the ID is
+// known. Returns "" if the user isn't cached anywhere (row stores ID
+// alone, mirroring Python's behavior on cache miss).
 func (b *Bot) userTagFromState(userID string) string {
-	if b.Session == nil || b.Session.State == nil {
+	if b.Session == nil || b.Session.State == nil || userID == "" {
 		return ""
 	}
-	u, err := b.Session.State.Member("", userID)
-	if err == nil && u != nil && u.User != nil {
-		return authorTag(u.User)
+	for _, g := range b.Session.State.Guilds {
+		if m, err := b.Session.State.Member(g.ID, userID); err == nil && m != nil && m.User != nil {
+			return authorTag(m.User)
+		}
 	}
 	return ""
 }
@@ -306,7 +308,7 @@ func (b *Bot) onStageInstanceCreate(_ *discordgo.Session, e *discordgo.StageInst
 		Details: map[string]any{
 			"topic":         e.Topic,
 			"channel_id":    e.ChannelID,
-			"privacy_level": strconv.Itoa(int(e.PrivacyLevel)),
+			"privacy_level": stagePrivacyLevelStr(e.PrivacyLevel),
 		},
 		OccurredAt: time.Now(),
 	}); err != nil {
@@ -321,8 +323,8 @@ func diffStageInstance(before, after *discordgo.StageInstance) map[string]any {
 	}
 	if before.PrivacyLevel != after.PrivacyLevel {
 		changes["privacy_level"] = map[string]any{
-			"before": strconv.Itoa(int(before.PrivacyLevel)),
-			"after":  strconv.Itoa(int(after.PrivacyLevel)),
+			"before": stagePrivacyLevelStr(before.PrivacyLevel),
+			"after":  stagePrivacyLevelStr(after.PrivacyLevel),
 		}
 	}
 	return changes

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -29,7 +28,7 @@ func (b *Bot) onAutoModerationRuleCreate(_ *discordgo.Session, e *discordgo.Auto
 		TargetName: e.Name,
 		Details: map[string]any{
 			"rule_name":    e.Name,
-			"trigger_type": strconv.Itoa(int(e.TriggerType)),
+			"trigger_type": autoModTriggerTypeStr(e.TriggerType),
 			"actions":      autoModActions(e.Actions),
 		},
 		OccurredAt: time.Now(),
@@ -85,7 +84,7 @@ func (b *Bot) onAutoModerationRuleDelete(_ *discordgo.Session, e *discordgo.Auto
 func autoModActions(actions []discordgo.AutoModerationAction) []map[string]any {
 	out := make([]map[string]any, 0, len(actions))
 	for _, a := range actions {
-		out = append(out, map[string]any{"type": strconv.Itoa(int(a.Type))})
+		out = append(out, map[string]any{"type": autoModActionTypeStr(a.Type)})
 	}
 	return out
 }
@@ -93,8 +92,10 @@ func autoModActions(actions []discordgo.AutoModerationAction) []map[string]any {
 // ── AutoMod execution ────────────────────────────────────────────────────
 
 // autoModTriggerName mirrors discord.py's `execution.rule_trigger_type.name`
-// (e.g. AutoModerationRuleTriggerType.keyword.name = "keyword"). discordgo
-// only ships the int — we map back so payloads remain identical.
+// (e.g. AutoModRuleTriggerType.keyword.name = "keyword"). discordgo
+// only ships the int — we map back so payloads remain identical. Includes
+// values 5 (mention_spam) and 6 (member_profile) added by Discord after
+// discordgo v0.29.0's named constants were defined.
 func autoModTriggerName(t discordgo.AutoModerationRuleTriggerType) string {
 	switch t {
 	case discordgo.AutoModerationEventTriggerKeyword:
@@ -105,6 +106,10 @@ func autoModTriggerName(t discordgo.AutoModerationRuleTriggerType) string {
 		return "spam"
 	case discordgo.AutoModerationEventTriggerKeywordPreset:
 		return "keyword_preset"
+	case 5:
+		return "mention_spam"
+	case 6:
+		return "member_profile"
 	default:
 		return ""
 	}
@@ -139,7 +144,7 @@ func (b *Bot) onAutoModerationActionExecution(_ *discordgo.Session, e *discordgo
 		TargetID:  targetID,
 		Details: map[string]any{
 			"rule_trigger_name": autoModTriggerName(e.RuleTriggerType),
-			"action_type":       strconv.Itoa(int(e.Action.Type)),
+			"action_type":       autoModActionTypeStr(e.Action.Type),
 			"channel_id":        channelID,
 			"content":           content,
 			"matched_keyword":   e.MatchedKeyword,
@@ -204,7 +209,7 @@ func (b *Bot) onGuildAuditLogEntryCreate(_ *discordgo.Session, e *discordgo.Guil
 	}
 	var actionStr string
 	if e.ActionType != nil {
-		actionStr = strconv.Itoa(int(*e.ActionType))
+		actionStr = auditLogActionStr(*e.ActionType)
 	}
 	if err := db.SaveGuildEvent(context.Background(), b.Pool, db.GuildEventInput{
 		EventType: "audit_log",
