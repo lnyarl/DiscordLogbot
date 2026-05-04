@@ -15,6 +15,7 @@ import (
 	"github.com/lnyarl/discordlogbot/internal/db"
 	"github.com/lnyarl/discordlogbot/internal/httpx"
 	"github.com/lnyarl/discordlogbot/internal/mcp"
+	"github.com/lnyarl/discordlogbot/internal/oauth"
 	"github.com/lnyarl/discordlogbot/internal/permissions"
 	"github.com/lnyarl/discordlogbot/internal/web"
 )
@@ -36,10 +37,22 @@ func main() {
 	discordToken := config.MustGet("DISCORD_TOKEN")
 	discord := permissions.NewClient("", discordToken)
 
-	// ── MCP (Phase 2) — unchanged ────────────────────────────────────────
-	mcpServer := mcp.NewServer(mcp.NewDiscordLister(discord))
+	// ── MCP (Phase 6) — full 4-tool surface backed by the DB ─────────────
+	mcpServer := mcp.NewServerWithPool(mcp.NewDiscordLister(discord), pool)
 	verifier := auth.NewMCPVerifier(string(jwtSecret))
 	mcpHandler := mcp.NewHandler(verifier, mcpServer, nil)
+
+	// ── OAuth authorization server (Phase 6) ─────────────────────────────
+	oauthSrv := oauth.New(
+		config.Get("BASE_URL", "http://localhost:8080"),
+		jwtSecret,
+		config.Get("DISCORD_CLIENT_ID", ""),
+		config.Get("DISCORD_CLIENT_SECRET", ""),
+		config.Get("MCP_CLIENT_IDS", ""),
+		config.Get("MCP_ALLOWED_REDIRECT_URIS", ""),
+		pool,
+		discord,
+	)
 
 	// ── Web (Phase 5) ────────────────────────────────────────────────────
 	tpl, err := web.LoadTemplates()
@@ -96,6 +109,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", httpx.Health)
 	mcpHandler.Routes(mux)
+	oauthSrv.Mount(mux)
 
 	// Static assets
 	staticDirs.Mount(mux)
