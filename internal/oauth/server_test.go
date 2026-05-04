@@ -36,8 +36,16 @@ func TestVerifyPKCE_RejectMismatch(t *testing.T) {
 }
 
 func TestVerifyPKCE_ConstantTimeOnDifferentLengths(t *testing.T) {
+	// Empty / short / long-mismatch challenges must all fail without
+	// short-circuiting before the timing-safe compare. Behavioral
+	// verification only — actual timing is hard to assert in unit tests,
+	// but crypto/subtle.ConstantTimeCompare returns 0 on length mismatch
+	// without branching on the contents.
 	if VerifyPKCE("v", "") {
 		t.Error("empty challenge must fail")
+	}
+	if VerifyPKCE("v", "much longer than the expected sha256 base64") {
+		t.Error("longer-than-expected challenge must fail")
 	}
 }
 

@@ -41,6 +41,19 @@ func TestParseISOToDBString_RejectsGarbage(t *testing.T) {
 	}
 }
 
+func TestParseISOToDBString_TruncatesSubMicrosecond(t *testing.T) {
+	// Discord/Python timestamps are microsecond-aligned, but a Go-side
+	// caller might pass something with nanosecond precision. Truncation
+	// (not rounding) keeps lex comparisons monotonic.
+	got, err := parseISOToDBString("2026-04-25T00:00:00.123456789Z")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got != "2026-04-25T00:00:00.123456+00:00" {
+		t.Errorf("got=%q want truncated to .123456+00:00", got)
+	}
+}
+
 // ── appendTimeFilter ─────────────────────────────────────────────────────
 
 func TestAppendTimeFilter(t *testing.T) {

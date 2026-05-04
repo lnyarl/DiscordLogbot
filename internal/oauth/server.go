@@ -14,6 +14,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -258,23 +259,13 @@ func (s *Server) MakeAccessToken(userID, username string) (string, error) {
 // ── PKCE ─────────────────────────────────────────────────────────────────
 
 // VerifyPKCE checks that base64url(sha256(verifier)) without padding equals
-// the supplied challenge. Constant-time comparison.
+// the supplied challenge. Uses crypto/subtle.ConstantTimeCompare which
+// handles length differences without branching, so a length mismatch
+// doesn't leak before the byte-by-byte comparison.
 func VerifyPKCE(verifier, challenge string) bool {
 	h := sha256.Sum256([]byte(verifier))
 	computed := base64.RawURLEncoding.EncodeToString(h[:])
-	return secureEq(computed, challenge)
-}
-
-// secureEq compares two equal-length strings in constant time.
-func secureEq(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	var diff byte
-	for i := 0; i < len(a); i++ {
-		diff |= a[i] ^ b[i]
-	}
-	return diff == 0
+	return subtle.ConstantTimeCompare([]byte(computed), []byte(challenge)) == 1
 }
 
 // ── Routes ───────────────────────────────────────────────────────────────

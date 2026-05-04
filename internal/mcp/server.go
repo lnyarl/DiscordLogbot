@@ -231,6 +231,11 @@ func parseISOToDBString(s string) (string, error) {
 		return "", fmt.Errorf("잘못된 ISO 8601 datetime: %q", s)
 	}
 	t = t.UTC()
+	// Truncate to microseconds: Python's isoformat() prints exactly 6
+	// fractional digits when non-zero, so any sub-microsecond precision
+	// would diverge from a Python-written row. Truncation (not rounding)
+	// keeps lexicographic comparisons monotonic.
+	t = t.Truncate(time.Microsecond)
 	if t.Nanosecond() == 0 {
 		return t.Format("2006-01-02T15:04:05-07:00"), nil
 	}
@@ -458,6 +463,10 @@ func (s *Server) handleGetGuildEvents(
 	for rows.Next() {
 		var ev, an, tn, det, ts string
 		if err := rows.Scan(&ev, &an, &tn, &det, &ts); err != nil {
+			// Log + skip rather than aborting — a malformed row should
+			// not fail the whole tool call, but it MUST not be invisible
+			// either, since silent truncation breaks debugging.
+			slog.Error("get_guild_events scan", "err", err)
 			continue
 		}
 		out = append(out, guildEventRow{
@@ -487,6 +496,10 @@ func (s *Server) queryMessages(ctx context.Context, q string, params []any) ([]m
 	for rows.Next() {
 		var cn, an, content, ts string
 		if err := rows.Scan(&cn, &an, &content, &ts); err != nil {
+			// Log + skip — a single malformed row shouldn't fail the
+			// whole tool call, but silent truncation hides debugging
+			// signal for schema drift / null mismatches.
+			slog.Error("queryMessages scan", "err", err)
 			continue
 		}
 		out = append(out, messageRow{
