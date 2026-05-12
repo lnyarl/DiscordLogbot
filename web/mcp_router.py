@@ -15,6 +15,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from mcp.server import Server
 from mcp.server.sse import SseServerTransport
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import TextContent, Tool
 from starlette.responses import Response
 
@@ -30,6 +31,11 @@ _pool_ctx: ContextVar[asyncpg.Pool] = ContextVar("mcp_pool")
 
 mcp = Server("discord-logbot")
 sse_transport = SseServerTransport("/mcp/messages")
+
+# Streamable HTTP — 신규 transport. mcp-remote가 우선 시도하는 transport이며
+# 단일 endpoint(/mcp)로 동작. main.py의 lifespan에서 .run() 컨텍스트로 진입해야
+# 내부 task group이 활성화된다.
+streamable_manager = StreamableHTTPSessionManager(mcp)
 
 # session_id(UUID) → user_id 매핑: SSE 연결 수립 시 등록, 종료 시 정리
 # POST /messages 요청이 해당 세션 소유자의 JWT인지 검증하는 데 사용
@@ -382,3 +388,55 @@ async def mcp_messages(
 
     await sse_transport.handle_post_message(request.scope, request.receive, request._send)
     return _AlreadySentResponse()
+
+
+# ── Streamable HTTP ─────────────────────────────────────────────────────────
+# 신규 transport(/mcp 단일 endpoint). mcp-remote가 우선 시도하므로 추가만 해도
+# 자동으로 활성화. SSE endpoint(/mcp/sse, /mcp/messages)는 호환성을 위해 그대로 유지.
+
+async def _handle_streamable(request: Request) -> Response:
+    """공통 핸들러: 토큰 검증 → 컨텍스트 세팅 → manager에 위임.
+
+    StreamableHTTPSessionManager가 응답을 직접 ASGI send에 쓰므로 _AlreadySentResponse
+    sentinel 반환.
+    """
+    auth = request.headers.get("authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(401, "Missing Bearer token")
+    try:
+        payload = jwt.decode(auth[7:], JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except JWTError:
+        raise HTTPException(401, "Invalid or expired token")
+    if payload.get("type") != "mcp_access":
+        raise HTTPException(401, "Invalid token type")
+
+    user_id: str = payload["sub"]
+    pool: asyncpg.Pool = request.app.state.pool
+
+    token_u = _user_id_ctx.set(user_id)
+    token_p = _pool_ctx.set(pool)
+    try:
+        await streamable_manager.handle_request(
+            request.scope, request.receive, request._send,
+        )
+    finally:
+        _user_id_ctx.reset(token_u)
+        _pool_ctx.reset(token_p)
+    return _AlreadySentResponse()
+
+
+@router.post("")
+async def mcp_streamable_post(request: Request) -> Response:
+    return await _handle_streamable(request)
+
+
+@router.get("")
+async def mcp_streamable_get(request: Request) -> Response:
+    # GET은 server-initiated 이벤트 스트림 수신용 (선택적, MCP 명세)
+    return await _handle_streamable(request)
+
+
+@router.delete("")
+async def mcp_streamable_delete(request: Request) -> Response:
+    # DELETE는 세션 종료 신호 (MCP 명세)
+    return await _handle_streamable(request)

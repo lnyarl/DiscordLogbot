@@ -138,6 +138,27 @@ def make_access_token(user_id: str, username: str) -> str:
     )
 
 
+def make_refresh_token(user_id: str, username: str, client_id: str) -> str:
+    """30일짜리 refresh token (JWT). access_token 만료 시 OAuth 콜백 listener를
+    띄우지 않고 조용히 새 access_token을 받기 위한 용도.
+
+    JTI 일회성: 새 refresh 발급마다 JTI 갱신 (rotation). 이전 refresh는 재사용 불가.
+    """
+    exp = datetime.now(timezone.utc) + timedelta(days=30)
+    return jwt.encode(
+        {
+            "type": "mcp_refresh",
+            "jti": secrets.token_urlsafe(16),
+            "sub": user_id,
+            "username": username,
+            "cid": client_id,
+            "exp": exp,
+        },
+        JWT_SECRET,
+        algorithm=JWT_ALGORITHM,
+    )
+
+
 def _verify_pkce(verifier: str, challenge: str) -> bool:
     """S256 PKCE 검증."""
     digest = hashlib.sha256(verifier.encode()).digest()
@@ -179,7 +200,7 @@ async def oauth_metadata():
         "authorization_endpoint": f"{BASE_URL}/oauth/authorize",
         "token_endpoint": f"{BASE_URL}/oauth/token",
         "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code"],
+        "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": ["none"],
     })
@@ -306,14 +327,38 @@ async def discord_callback(code: str, state: str, request: Request):
 @router.post("/oauth/token")
 async def token(
     grant_type: str = Form(...),
-    code: str = Form(...),
-    code_verifier: str = Form(...),
+    code: str = Form(default=""),
+    code_verifier: str = Form(default=""),
+    refresh_token: str = Form(default=""),
     redirect_uri: str = Form(default=""),
     client_id: str = Form(default=""),
 ):
-    """auth code + PKCE 검증 → access token 발급."""
-    if grant_type != "authorization_code":
-        raise HTTPException(400, "Only authorization_code grant type supported")
+    """OAuth 2.0 token endpoint — authorization_code 및 refresh_token grant 지원.
+
+    refresh_token grant는 OAuth 콜백 listener(localhost 임의 포트) 없이 조용히
+    access token을 갱신할 수 있어, mcp-remote가 24h마다 브라우저로 재인증할 필요가
+    사라진다 → localhost 포트 충돌 케이스 해소.
+
+    Refresh rotation: 매 갱신마다 새 refresh token도 함께 발급, 이전 jti는 일회성 소진.
+    """
+    if grant_type == "authorization_code":
+        return await _token_from_authorization_code(
+            code=code, code_verifier=code_verifier, client_id=client_id,
+        )
+    if grant_type == "refresh_token":
+        return await _token_from_refresh_token(
+            refresh_token=refresh_token, client_id=client_id,
+        )
+    raise HTTPException(
+        400, "Only authorization_code and refresh_token grant types supported"
+    )
+
+
+async def _token_from_authorization_code(
+    code: str, code_verifier: str, client_id: str
+) -> JSONResponse:
+    if not code or not code_verifier:
+        raise HTTPException(400, "code and code_verifier required")
 
     try:
         payload = jwt.decode(code, JWT_SECRET, algorithms=[JWT_ALGORITHM])
@@ -347,9 +392,51 @@ async def token(
     if not sub or username is None:
         raise HTTPException(400, "Invalid auth code: missing claims")
 
-    access_token = make_access_token(sub, username)
     return JSONResponse({
-        "access_token": access_token,
+        "access_token": make_access_token(sub, username),
+        "refresh_token": make_refresh_token(sub, username, client_id),
+        "token_type": "Bearer",
+        "expires_in": 86400,
+    })
+
+
+async def _token_from_refresh_token(
+    refresh_token: str, client_id: str
+) -> JSONResponse:
+    if not refresh_token:
+        raise HTTPException(400, "refresh_token required")
+    if not client_id:
+        raise HTTPException(400, "client_id is required")
+
+    try:
+        payload = jwt.decode(refresh_token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except JWTError:
+        raise HTTPException(400, "Invalid or expired refresh token")
+
+    if payload.get("type") != "mcp_refresh":
+        raise HTTPException(400, "Invalid token type")
+
+    rt_client_id = payload.get("cid", "")
+    if not _is_client_id_allowed(rt_client_id):
+        raise HTTPException(400, "Unknown client_id in refresh token")
+    if client_id != rt_client_id:
+        raise HTTPException(400, "client_id mismatch")
+
+    jti = payload.get("jti")
+    if not jti:
+        raise HTTPException(400, "Invalid refresh token: missing jti")
+    # 일회성 소진 — 새 refresh로 rotation, 이전 토큰 재사용 차단
+    if not _consume_jti(jti):
+        raise HTTPException(400, "Refresh token already used")
+
+    sub = payload.get("sub")
+    username = payload.get("username")
+    if not sub or username is None:
+        raise HTTPException(400, "Invalid refresh token: missing claims")
+
+    return JSONResponse({
+        "access_token": make_access_token(sub, username),
+        "refresh_token": make_refresh_token(sub, username, client_id),
         "token_type": "Bearer",
         "expires_in": 86400,
     })

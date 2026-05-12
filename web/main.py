@@ -1,9 +1,10 @@
 import os
 import sys
+from contextlib import asynccontextmanager
 
 import asyncpg
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter
@@ -18,11 +19,37 @@ if not DATABASE_URL:
 
 limiter = Limiter(key_func=get_remote_address)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """앱 시작/종료 시점 리소스 관리.
+
+    StreamableHTTPSessionManager가 내부 task group 활성화를 위해 .run() context를
+    요구하므로, FastAPI의 lifespan 안에서 함께 진입한다.
+    """
+    app.state.pool = await asyncpg.create_pool(DATABASE_URL)
+    async with app.state.pool.acquire() as conn:
+        await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_messages_content_trgm
+            ON messages USING GIN (content gin_trgm_ops)
+        """)
+    from db.migrate import run_migrations
+    await run_migrations(app.state.pool)
+
+    from web.mcp_router import streamable_manager
+    async with streamable_manager.run():
+        yield
+
+    await app.state.pool.close()
+
+
 app = FastAPI(
     title="DiscordLogbot Search",
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
+    lifespan=lifespan,
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, lambda req, exc: JSONResponse(
@@ -41,24 +68,6 @@ for _dir in (_attachments_dir, _emojis_dir):
 
 app.mount("/attachments", StaticFiles(directory=_attachments_dir), name="attachments")
 app.mount("/emojis", StaticFiles(directory=_emojis_dir), name="emojis")
-
-
-@app.on_event("startup")
-async def startup():
-    app.state.pool = await asyncpg.create_pool(DATABASE_URL)
-    async with app.state.pool.acquire() as conn:
-        await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_messages_content_trgm
-            ON messages USING GIN (content gin_trgm_ops)
-        """)
-    from db.migrate import run_migrations
-    await run_migrations(app.state.pool)
-
-
-@app.on_event("shutdown")
-async def shutdown():
-    await app.state.pool.close()
 
 
 from web.auth import router as auth_router, TEMPLATES as auth_templates      # noqa: E402
