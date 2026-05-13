@@ -41,24 +41,34 @@ BASE_URL = os.getenv("BASE_URL", "http://localhost:8080")
 _DISCORD_CB = f"{BASE_URL}/oauth/discord_callback"
 
 # ── client_id 허용 목록 ─────────────────────────────────────────────────────
-# MCP_CLIENT_IDS: 쉼표 구분 허용 client_id 목록
-# 미설정 시 빈 set → 모든 client_id 거부 (운영 환경에서는 반드시 설정 필요)
+# 두 가지 client_id 발급 경로:
+#   1. MCP_CLIENT_IDS env var — 수동 등록한 정적 client_id (backward compat)
+#   2. POST /oauth/register (RFC 7591 DCR) — JWT 형식의 client_id 자동 발급
+# 둘 중 하나만 통과해도 OK. DCR은 mcp-remote 같은 클라이언트가 URL만 알면
+# 자동 등록되도록 하기 위한 표준 메커니즘.
 _ALLOWED_CLIENT_IDS: set[str] = {
     c.strip()
     for c in os.getenv("MCP_CLIENT_IDS", "").split(",")
     if c.strip()
 }
 
-if not _ALLOWED_CLIENT_IDS:
-    logging.warning(
-        "MCP_CLIENT_IDS 환경변수가 설정되지 않았습니다. "
-        "모든 OAuth 요청이 거부됩니다. .env에 MCP_CLIENT_IDS를 설정하세요."
-    )
+
+def _decode_dcr_client_id(client_id: str) -> dict | None:
+    """DCR로 발급된 JWT client_id를 디코드/검증. 아니면 None."""
+    try:
+        payload = jwt.decode(client_id, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except JWTError:
+        return None
+    if payload.get("type") != "mcp_client_id":
+        return None
+    return payload
 
 
 def _is_client_id_allowed(client_id: str) -> bool:
-    """등록된 client_id인지 확인. 허용 목록이 비어 있으면 전체 거부."""
-    return bool(_ALLOWED_CLIENT_IDS) and client_id in _ALLOWED_CLIENT_IDS
+    """정적 화이트리스트 통과 또는 유효한 DCR JWT면 허용."""
+    if client_id in _ALLOWED_CLIENT_IDS:
+        return True
+    return _decode_dcr_client_id(client_id) is not None
 
 
 # ── redirect_uri 허용 목록 ───────────────────────────────────────────────────
@@ -73,6 +83,7 @@ _LOCALHOST_RE = re.compile(r"^https?://(localhost|127\.0\.0\.1)(?::(\d{1,5}))?(/
 
 
 def _is_redirect_uri_allowed(uri: str) -> bool:
+    """일반 redirect_uri 화이트리스트 (정적 client_id 및 DCR 등록 시점 게이트)."""
     if uri in _STATIC_ALLOWED:
         return True
     m = _LOCALHOST_RE.match(uri)
@@ -82,6 +93,18 @@ def _is_redirect_uri_allowed(uri: str) -> bool:
             return False
         return True
     return False
+
+
+def _is_redirect_allowed_for_client(client_id: str, redirect_uri: str) -> bool:
+    """client_id별 redirect_uri 검증.
+
+    DCR로 등록된 client_id는 등록 시 박힌 redirect_uris 목록에만 한정.
+    정적 client_id는 일반 _is_redirect_uri_allowed 규칙 적용.
+    """
+    payload = _decode_dcr_client_id(client_id)
+    if payload is not None:
+        return redirect_uri in payload.get("redirect_uris", [])
+    return _is_redirect_uri_allowed(redirect_uri)
 
 
 # ── JWT 헬퍼 ────────────────────────────────────────────────────────────────
@@ -97,6 +120,27 @@ def _decode_state(token: str) -> dict | None:
         return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except JWTError:
         return None
+
+
+def _make_dcr_client_id(redirect_uris: list[str], client_name: str) -> str:
+    """DCR로 등록된 client의 client_id를 JWT로 발급.
+
+    redirect_uris는 client_id에 영구 바인딩 — 이 client_id로 들어오는 모든 OAuth
+    요청은 이 목록 중 하나의 redirect_uri만 사용 가능. 등록 정보 자체가 client_id가
+    되므로 별도 DB 저장 불필요.
+
+    만료 없음 (`exp` claim 생략) — RFC 7591 §3.2.1의 client_id_issued_at만 명시.
+    """
+    return jwt.encode(
+        {
+            "type": "mcp_client_id",
+            "redirect_uris": redirect_uris,
+            "client_name": client_name,
+            "iat": int(datetime.now(timezone.utc).timestamp()),
+        },
+        JWT_SECRET,
+        algorithm=JWT_ALGORITHM,
+    )
 
 
 def _make_auth_code(
@@ -199,11 +243,77 @@ async def oauth_metadata():
         "issuer": BASE_URL,
         "authorization_endpoint": f"{BASE_URL}/oauth/authorize",
         "token_endpoint": f"{BASE_URL}/oauth/token",
+        "registration_endpoint": f"{BASE_URL}/oauth/register",
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": ["none"],
     })
+
+
+# DCR 요청 본문 크기 제한 — RFC 7591에 명시값은 없으나 일반 메타데이터
+# 5~10개 redirect_uris + client_name 정도면 1KB 미만이 정상.
+_DCR_MAX_BODY_BYTES = 8 * 1024
+_DCR_MAX_REDIRECT_URIS = 10
+_DCR_MAX_NAME_LEN = 200
+
+
+@router.post("/oauth/register")
+async def register(request: Request):
+    """RFC 7591 Dynamic Client Registration.
+
+    누구나 등록 가능하지만 redirect_uris는 우리 화이트리스트(localhost 또는
+    MCP_ALLOWED_REDIRECT_URIS)를 통과해야 함 → 악의적 등록자가 자신의 외부
+    URL로 코드를 보낼 수 없음. 최종 사용자 인증(Discord OAuth 동의 화면)이
+    추가 게이트 역할.
+
+    발급된 client_id는 redirect_uris와 client_name을 박은 JWT — 서버 측 저장 없음.
+    """
+    # 요청 본문 크기 보호 (DoS 방지)
+    body_bytes = await request.body()
+    if len(body_bytes) > _DCR_MAX_BODY_BYTES:
+        raise HTTPException(413, "Request body too large")
+
+    try:
+        import json as _json
+        metadata = _json.loads(body_bytes) if body_bytes else {}
+    except ValueError:
+        raise HTTPException(400, "Invalid JSON body")
+
+    if not isinstance(metadata, dict):
+        raise HTTPException(400, "Body must be a JSON object")
+
+    redirect_uris = metadata.get("redirect_uris")
+    if not isinstance(redirect_uris, list) or not redirect_uris:
+        raise HTTPException(400, "redirect_uris is required and must be a non-empty list")
+    if len(redirect_uris) > _DCR_MAX_REDIRECT_URIS:
+        raise HTTPException(400, f"Too many redirect_uris (max {_DCR_MAX_REDIRECT_URIS})")
+
+    for uri in redirect_uris:
+        if not isinstance(uri, str):
+            raise HTTPException(400, "redirect_uri must be a string")
+        if not _is_redirect_uri_allowed(uri):
+            raise HTTPException(400, f"redirect_uri not allowed: {uri}")
+
+    client_name_raw = metadata.get("client_name", "")
+    if not isinstance(client_name_raw, str):
+        client_name_raw = ""
+    client_name = client_name_raw[:_DCR_MAX_NAME_LEN]
+
+    client_id = _make_dcr_client_id(redirect_uris, client_name)
+
+    return JSONResponse(
+        {
+            "client_id": client_id,
+            "client_id_issued_at": int(time.time()),
+            "redirect_uris": redirect_uris,
+            "client_name": client_name,
+            "grant_types": ["authorization_code", "refresh_token"],
+            "response_types": ["code"],
+            "token_endpoint_auth_method": "none",
+        },
+        status_code=201,
+    )
 
 
 @router.get("/oauth/authorize")
@@ -220,7 +330,8 @@ async def authorize(
     # RFC 6749: client_id → redirect_uri 순으로 먼저 검증, 이후 나머지 파라미터
     if not _is_client_id_allowed(client_id):
         raise HTTPException(400, "Unknown client_id")
-    if not _is_redirect_uri_allowed(redirect_uri):
+    # DCR 등록 client는 등록 시 박힌 redirect_uris에 묶임. 정적 client는 일반 규칙.
+    if not _is_redirect_allowed_for_client(client_id, redirect_uri):
         raise HTTPException(400, "redirect_uri not allowed")
     if response_type != "code":
         raise HTTPException(400, "Only response_type=code supported")
@@ -313,8 +424,9 @@ async def discord_callback(code: str, state: str, request: Request):
     )
 
     target_uri = state_data["redirect_uri"]
-    # defense in depth: state JWT가 변조될 수 없더라도 콜백 시점에도 재검증
-    if not _is_redirect_uri_allowed(target_uri):
+    # defense in depth: state JWT가 변조될 수 없더라도 콜백 시점에도 재검증.
+    # DCR 등록 client는 등록 시 박힌 redirect_uris 안에 있어야 함.
+    if not _is_redirect_allowed_for_client(state_data.get("cid", ""), target_uri):
         raise HTTPException(400, "redirect_uri not allowed")
 
     params: dict[str, str] = {"code": auth_code}
