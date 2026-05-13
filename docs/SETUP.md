@@ -60,8 +60,8 @@ cp .env.example .env
 | `DISCORD_REDIRECT_URI` | `{BASE_URL}/auth/callback` (Developer Portal에 등록한 값과 정확히 일치) |
 | `JWT_SECRET` | 세션 JWT 서명키. **반드시** 랜덤 문자열로 채울 것 |
 | `BASE_URL` | 외부에서 접근 가능한 서버 URL (예: `https://logbot.example.com`). MCP OAuth redirect 생성에 사용 |
-| `MCP_CLIENT_IDS` | (선택) MCP 접속을 허용할 client_id 목록, 쉼표 구분. 미설정 시 모든 MCP 요청 거부 |
-| `MCP_ALLOWED_REDIRECT_URIS` | (선택) localhost 외에 허용할 MCP 클라이언트 redirect URI |
+| `MCP_CLIENT_IDS` | (선택, 거의 안 씀) 정적 client_id 화이트리스트. 보통은 비워두고 DCR(RFC 7591)에 맡김 |
+| `MCP_ALLOWED_REDIRECT_URIS` | (선택) localhost 외에 허용할 MCP 클라이언트 redirect URI. 호스티드 웹 클라이언트용 |
 
 ### `JWT_SECRET` 생성
 
@@ -128,48 +128,76 @@ docker compose logs -f web      # "Application startup complete." 출력 확인
 
 ## 6. MCP 클라이언트 연동
 
-DiscordLogbot은 MCP(Model Context Protocol) over HTTP+SSE를 내장합니다. Claude Desktop 같은 MCP 클라이언트가 디스코드 히스토리를 직접 쿼리할 수 있습니다.
+DiscordLogbot은 MCP(Model Context Protocol) 서버를 내장해 Claude Desktop 같은 AI 클라이언트가 디스코드 히스토리를 직접 쿼리할 수 있게 합니다. 다음 표준을 지원:
+
+- **Streamable HTTP transport** (MCP 2025-03-26) — 단일 `/mcp` 엔드포인트
+- **Server-Sent Events transport** (구버전) — `/mcp/sse` + `/mcp/messages` (호환성)
+- **OAuth 2.0 + PKCE** with **Refresh Tokens** — 30일 동안 브라우저 재인증 없이 갱신
+- **Dynamic Client Registration** (RFC 7591) — 클라이언트가 자동 등록, 수동 client_id 발급 불필요
+- **RFC 8414 Authorization Server Metadata** — `/.well-known/oauth-authorization-server`
 
 ### 6-1. 서버 측 준비
 
-`.env`에 다음 값이 있어야 합니다:
+`.env`에 `BASE_URL`만 있으면 됩니다. 일반적인 경우 `MCP_CLIENT_IDS`나 `MCP_ALLOWED_REDIRECT_URIS`는 비워두세요 — DCR이 localhost 클라이언트를 자동 처리.
 
 ```env
 BASE_URL=https://your-domain.com
-MCP_CLIENT_IDS=claude-desktop,my-custom-client      # 미설정 시 모든 요청 거부
-# MCP_ALLOWED_REDIRECT_URIS=https://your-app.example.com/callback   # localhost 외 허용
 ```
 
-엔드포인트:
-- SSE: `{BASE_URL}/mcp/sse`
-- POST messages: `{BASE_URL}/mcp/messages`
-- OAuth: `{BASE_URL}/oauth/...`
+엔드포인트 (자동 광고됨):
+- Discovery: `{BASE_URL}/.well-known/oauth-authorization-server`
+- Streamable HTTP MCP: `{BASE_URL}/mcp`
+- SSE MCP (구버전): `{BASE_URL}/mcp/sse`, `{BASE_URL}/mcp/messages`
+- OAuth: `{BASE_URL}/oauth/{authorize,token,register,discord_callback}`
 
 ### 6-2. 제공되는 툴
 
 | 툴 | 용도 |
 |---|---|
-| `list_channels` | 사용자가 접근 가능한 서버/채널 목록 |
+| `list_channels` | 사용자가 접근 가능한 서버/채널 목록 (카테고리 포함) |
 | `search_messages` | 채널에서 키워드 검색 (since/until 기간 필터 가능) |
 | `get_messages` | 채널 메시지 조회 (기간 필터, 최대 500건) |
 | `get_guild_events` | 서버 이벤트 조회 (event_type 필터, 기간 필터) |
 
-모든 툴은 호출 시점마다 사용자 권한을 재확인합니다 — 봇이 게이트웨이 이벤트로 권한 캐시를 무효화하므로, 권한 변경이 즉시 반영됩니다.
+모든 툴은 호출 시점마다 PostgreSQL 캐시에서 사용자 권한을 재확인합니다. 봇이 Discord 게이트웨이 이벤트(역할/채널/멤버 변경)로 캐시를 무효화하므로 **권한 변경이 1초 이내 반영**, 누락 시에도 6h TTL이 자가 치료.
 
-### 6-3. Claude Desktop 예시
+### 6-3. Claude Desktop 연동
 
-`claude_desktop_config.json`:
+`claude_desktop_config.json` (Windows: `%APPDATA%\Claude\`, macOS: `~/Library/Application Support/Claude/`):
+
 ```json
 {
   "mcpServers": {
     "discord-logbot": {
-      "url": "https://your-domain.com/mcp/sse"
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://your-domain.com/mcp"]
     }
   }
 }
 ```
 
-최초 연결 시 OAuth 흐름이 트리거되어 디스코드 로그인을 요구합니다. 토큰은 클라이언트가 보관하고, 이후 자동 인증됩니다.
+이게 전부입니다. mcp-remote가 알아서:
+
+1. `/.well-known`에서 endpoints 발견 → `registration_endpoint` 확인
+2. `POST /oauth/register`로 자기 client_id 자동 발급
+3. OAuth + PKCE 흐름 시작 → 브라우저로 Discord 로그인 화면 1회
+4. 동의 → access token + refresh token 발급, mcp-remote가 로컬에 저장
+5. 이후 24h마다 refresh token으로 조용히 갱신 (브라우저 안 뜸)
+6. 30일 후 refresh도 만료 시 다시 브라우저로 한 번 더 인증
+
+Claude Desktop 재시작 시 OAuth 캐시는 유지되므로 추가 인증 없음.
+
+### 6-4. 다른 MCP 클라이언트
+
+표준 준수 클라이언트(MCP Inspector, ChatGPT Custom Connectors 등)는 동일한 패턴으로 동작:
+
+```bash
+# 개발용 GUI 검증
+npx @modelcontextprotocol/inspector
+# Transport: Streamable HTTP, URL: https://your-domain.com/mcp
+```
+
+호스티드 클라이언트(외부 도메인 redirect_uri)를 등록하려면 `MCP_ALLOWED_REDIRECT_URIS`에 해당 URI를 추가하세요. DCR이 그 URI를 통과시켜야 등록 가능.
 
 ---
 
@@ -251,9 +279,10 @@ cat backup_20260101.sql | docker compose exec -T logbot-postgres psql -U logbot 
 - 권한이 최근에 바뀌었다면 로그아웃 후 재로그인
 
 **MCP 클라이언트 연결이 거부된다 (`401 / 403`)**
-- `.env`의 `MCP_CLIENT_IDS`에 클라이언트의 `client_id`가 등록되어 있는지 (미설정 시 전부 거부)
-- Redirect URI가 `MCP_ALLOWED_REDIRECT_URIS` 또는 localhost에 해당하는지
-- `BASE_URL`이 외부 접근 가능한 실제 URL인지
+- `BASE_URL`이 외부 접근 가능한 실제 URL인지, Discord Developer Portal Redirects에 `{BASE_URL}/oauth/discord_callback` 등록돼있는지
+- DCR 등록은 redirect_uri가 localhost거나 `MCP_ALLOWED_REDIRECT_URIS`에 포함돼야 통과
+- 옛 토큰이 남아 있을 수 있음 — 클라이언트 측 OAuth 캐시 비우고 재시도
+  (mcp-remote의 경우 `$env:USERPROFILE\.mcp-auth` 또는 `~/.mcp-auth` 삭제)
 
 **`docker compose up` 시 postgres 연결 실패**
 - `.env`의 `POSTGRES_PASSWORD`와 `DATABASE_URL` 비밀번호 일치
